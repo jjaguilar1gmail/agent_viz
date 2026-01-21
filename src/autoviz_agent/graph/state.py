@@ -39,14 +39,18 @@ class GraphState(BaseModel):
     dataset_path: Optional[str] = Field(None, description="Path to dataset")
     question: str = Field(..., description="User question")
 
+    # Configuration and components
+    config: Optional[Dict[str, Any]] = Field(None, description="Configuration")
+    artifact_manager: Optional[Any] = Field(None, description="Artifact manager")
+    execution_log: Optional[Any] = Field(None, description="Execution log")
+    llm_client: Optional[Any] = Field(None, description="LLM client")
+    dataframe: Optional[Any] = Field(None, description="Loaded dataframe")
+
     # Processing state
-    dataset: Optional[Any] = Field(None, description="Loaded dataset (DataFrame)")
-    schema: Optional[Dict[str, Any]] = Field(None, description="Inferred schema")
-    intent: Optional[Dict[str, Any]] = Field(None, description="Classified intent")
-    template_id: Optional[str] = Field(None, description="Selected template ID")
+    schema: Optional[Any] = Field(None, description="Inferred schema")
+    intent: Optional[Any] = Field(None, description="Classified intent")
     template_plan: Optional[Dict[str, Any]] = Field(None, description="Template plan")
     adapted_plan: Optional[Dict[str, Any]] = Field(None, description="Adapted plan")
-    plan_diff: Optional[str] = Field(None, description="Plan diff")
     tool_calls: list[Dict[str, Any]] = Field(default_factory=list, description="Tool calls")
     execution_results: list[Dict[str, Any]] = Field(
         default_factory=list, description="Execution results"
@@ -55,7 +59,6 @@ class GraphState(BaseModel):
     # Status tracking
     current_node: str = Field(default="initialize", description="Current node")
     error_message: Optional[str] = Field(None, description="Error message if failed")
-    needs_repair: bool = Field(default=False, description="Whether repair is needed")
 
     class Config:
         arbitrary_types_allowed = True

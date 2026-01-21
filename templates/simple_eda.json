@@ -1,0 +1,26 @@
+{
+  "template_id": "simple_eda_01",
+  "version": "1.0.0",
+  "name": "Simple EDA",
+  "description": "Simple exploratory analysis",
+  "intents": ["general_eda"],
+  "data_shape": ["tabular"],
+  "requires": {
+    "min_rows": 1,
+    "min_columns": 1
+  },
+  "prefers": {
+    "has_numeric": true
+  },
+  "supports": ["basic_stats", "visualization"],
+  "steps": [
+    {
+      "step_id": "stats",
+      "tool": "compute_summary_stats",
+      "description": "Compute statistics",
+      "params": {
+        "df": "$dataframe"
+      }
+    }
+  ]
+}

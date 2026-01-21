@@ -1,0 +1,63 @@
+{
+  "template_id": "time_series_01",
+  "version": "1.0.0",
+  "name": "Time Series Investigation",
+  "description": "Analyze temporal patterns, trends, and seasonality",
+  "intents": ["time_series_investigation"],
+  "data_shape": ["timeseries"],
+  "requires": {
+    "min_rows": 2,
+    "min_columns": 2
+  },
+  "prefers": {
+    "has_temporal": true,
+    "has_numeric": true
+  },
+  "supports": ["aggregation"],
+  "steps": [
+    {
+      "step_id": "parse_datetime",
+      "tool": "parse_datetime",
+      "description": "Parse and validate datetime column",
+      "params": {
+        "df": "$dataframe",
+        "auto_detect": true
+      }
+    },
+    {
+      "step_id": "summary_stats",
+      "tool": "compute_summary_stats",
+      "description": "Compute summary statistics for metrics",
+      "params": {
+        "df": "$dataframe"
+      }
+    },
+    {
+      "step_id": "plot_time_series",
+      "tool": "plot_line",
+      "description": "Plot metrics over time",
+      "params": {
+        "df": "$dataframe",
+        "show_trend": true
+      }
+    },
+    {
+      "step_id": "plot_distributions",
+      "tool": "plot_histogram",
+      "description": "Distribution of key metrics",
+      "params": {
+        "df": "$dataframe"
+      }
+    },
+    {
+      "step_id": "detect_anomalies",
+      "tool": "detect_anomalies",
+      "description": "Detect temporal anomalies",
+      "params": {
+        "df": "$dataframe",
+        "method": "zscore",
+        "threshold": 3.0
+      }
+    }
+  ]
+}

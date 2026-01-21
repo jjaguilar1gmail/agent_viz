@@ -1,0 +1,93 @@
+# AutoViz Agent Configuration
+
+# Default model to use
+default_model: "phi-3.5-mini"
+
+# Model definitions
+models:
+  phi-3.5-mini:
+    name: "Phi-3.5-mini-instruct"
+    backend: "llama.cpp"
+    path: "models/Phi-3.5-mini-instruct-Q4_K_M.gguf"
+    context_length: 4096
+    quantization: "Q4_K_M"
+    n_gpu_layers: -1  # Use all available GPU layers
+    temperature: 0.1  # Low for deterministic behavior
+    top_p: 0.9
+    max_tokens: 2048
+    
+  llama-3.1-8b:
+    name: "Llama 3.1 8B Instruct"
+    backend: "llama.cpp"
+    path: "models/Meta-Llama-3.1-8B-Instruct-Q4_K_M.gguf"
+    context_length: 8192
+    quantization: "Q4_K_M"
+    n_gpu_layers: -1
+    temperature: 0.1
+    top_p: 0.9
+    max_tokens: 2048
+    
+  mistral-7b:
+    name: "Mistral 7B Instruct v0.3"
+    backend: "llama.cpp"
+    path: "models/Mistral-7B-Instruct-v0.3-Q4_K_M.gguf"
+    context_length: 8192
+    quantization: "Q4_K_M"
+    n_gpu_layers: -1
+    temperature: 0.1
+    top_p: 0.9
+    max_tokens: 2048
+    
+  gemma-2-9b:
+    name: "Gemma 2 9B Instruct"
+    backend: "llama.cpp"
+    path: "models/gemma-2-9b-it-Q4_K_M.gguf"
+    context_length: 8192
+    quantization: "Q4_K_M"
+    n_gpu_layers: -1
+    temperature: 0.1
+    top_p: 0.9
+    max_tokens: 2048
+
+# Backend-specific settings
+backends:
+  llama.cpp:
+    verbose: false
+    seed: 42  # For deterministic generation
+    n_batch: 512
+    n_threads: 8
+    
+  vllm:
+    enabled: false  # Optional backend
+    host: "localhost"
+    port: 8000
+
+# Plan templates directory
+templates_dir: "templates"
+
+# Output settings
+output:
+  base_dir: "outputs"
+  artifacts:
+    - "plan_template.json"
+    - "plan_adapted.json"
+    - "plan_diff.md"
+    - "tool_calls.json"
+    - "execution_log.json"
+    - "report.md"
+  charts_dir: "charts"
+
+# Intent classification settings
+intent:
+  max_intents: 3  # Top-N intents to consider
+  labels:
+    - "general_eda"
+    - "time_series_investigation"
+    - "segmentation_drivers"
+    - "anomaly_detection"
+    - "comparative_analysis"
+
+# Logging
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"

@@ -11,6 +11,8 @@ PLAN_TEMPLATE_SCHEMA: Dict[str, Any] = {
     "properties": {
         "template_id": {"type": "string", "description": "Unique template identifier"},
         "version": {"type": "string", "description": "Template version"},
+        "name": {"type": "string", "description": "Human-readable template name"},
+        "description": {"type": "string", "description": "Template description"},
         "intents": {
             "type": "array",
             "items": {

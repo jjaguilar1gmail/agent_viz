@@ -1,7 +1,7 @@
 """Execution log writer and structured entries."""
 
 from datetime import datetime
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from autoviz_agent.utils.logging import get_logger
 

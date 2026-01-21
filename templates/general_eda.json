@@ -1,0 +1,61 @@
+{
+  "template_id": "general_eda_01",
+  "version": "1.0.0",
+  "name": "General Exploratory Data Analysis",
+  "description": "Broad analysis with distributions, correlations, and key visualizations",
+  "intents": ["general_eda"],
+  "data_shape": ["tabular"],
+  "requires": {
+    "min_rows": 1,
+    "min_columns": 1
+  },
+  "prefers": {
+    "has_numeric": true
+  },
+  "supports": ["categorical", "temporal"],
+  "steps": [
+    {
+      "step_id": "summary_stats",
+      "tool": "compute_summary_stats",
+      "description": "Compute summary statistics for numeric columns",
+      "params": {
+        "df": "$dataframe"
+      }
+    },
+    {
+      "step_id": "correlations",
+      "tool": "compute_correlations",
+      "description": "Compute pairwise correlations",
+      "params": {
+        "df": "$dataframe",
+        "method": "pearson"
+      }
+    },
+    {
+      "step_id": "distributions",
+      "tool": "compute_distributions",
+      "description": "Analyze distributions of numeric columns",
+      "params": {
+        "df": "$dataframe"
+      }
+    },
+    {
+      "step_id": "plot_histograms",
+      "tool": "plot_histogram",
+      "description": "Create histograms for key numeric columns",
+      "params": {
+        "df": "$dataframe",
+        "max_columns": 6
+      }
+    },
+    {
+      "step_id": "plot_correlation_matrix",
+      "tool": "plot_heatmap",
+      "description": "Visualize correlation matrix",
+      "params": {
+        "df": "$dataframe",
+        "annotation": true
+      }
+    }
+  ]
+}

@@ -91,16 +91,30 @@ def run_analysis(args) -> int:
     )
 
     try:
-        # Create and run pipeline
+        # Create and execute full agentic pipeline
         logger.info("Creating execution pipeline")
         pipeline = create_pipeline()
 
-        logger.info("Executing pipeline")
-        # Note: Full implementation will be completed with node implementations
-        # For now, we log that the pipeline is ready
-        logger.warning("Pipeline execution placeholder - full implementation in progress")
+        # Create initial state
+        initial_state = GraphState(
+            run_id=run_id,
+            dataset_path=str(args.dataset),
+            question=args.question,
+        )
 
-        logger.info(f"Analysis complete. Results in: {artifact_manager.run_dir}")
+        logger.info("Executing agentic pipeline")
+        # Execute the full LangGraph pipeline
+        result = pipeline.invoke(initial_state)
+
+        logger.info(f"✅ Analysis complete!")
+        logger.info(f"📄 Report: {artifact_manager.run_dir / 'report.md'}")
+        logger.info(f"📁 All results: {artifact_manager.run_dir}")
+        logger.info(f"📊 Observability artifacts:")
+        logger.info(f"   - plan_template.json")
+        logger.info(f"   - plan_adapted.json")
+        logger.info(f"   - plan_diff.md")
+        logger.info(f"   - tool_calls.json")
+        logger.info(f"   - execution_log.json")
         return 0
 
     except Exception as e:

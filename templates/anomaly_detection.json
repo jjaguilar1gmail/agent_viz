@@ -1,0 +1,61 @@
+{
+  "template_id": "anomaly_detection_01",
+  "version": "1.0.0",
+  "name": "Anomaly Detection",
+  "description": "Detect and visualize unusual patterns or outliers",
+  "intents": ["anomaly_detection"],
+  "data_shape": ["tabular"],
+  "requires": {
+    "min_rows": 3,
+    "min_columns": 1
+  },
+  "prefers": {
+    "has_numeric": true
+  },
+  "supports": ["temporal", "categorical"],
+  "steps": [
+    {
+      "step_id": "summary_stats",
+      "tool": "compute_summary_stats",
+      "description": "Compute summary statistics",
+      "params": {
+        "df": "$dataframe"
+      }
+    },
+    {
+      "step_id": "detect_statistical_anomalies",
+      "tool": "detect_anomalies",
+      "description": "Detect anomalies using statistical methods",
+      "params": {
+        "df": "$dataframe",
+        "method": "zscore",
+        "threshold": 3.0
+      }
+    },
+    {
+      "step_id": "plot_boxplots",
+      "tool": "plot_boxplot",
+      "description": "Visualize outliers with boxplots",
+      "params": {
+        "df": "$dataframe"
+      }
+    },
+    {
+      "step_id": "plot_scatter",
+      "tool": "plot_scatter",
+      "description": "Scatter plots to identify multivariate outliers",
+      "params": {
+        "df": "$dataframe",
+        "highlight_anomalies": true
+      }
+    },
+    {
+      "step_id": "compute_distributions",
+      "tool": "compute_distributions",
+      "description": "Analyze value distributions",
+      "params": {
+        "df": "$dataframe"
+      }
+    }
+  ]
+}
