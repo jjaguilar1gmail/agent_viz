@@ -58,7 +58,7 @@ and parameter specialization. The system MUST include a canonical demo (e.g.,
 December revenue anomaly).
 
 ### VII. Human-Centered Documentation
-A clear, human-written README is mandatory. The README MUST explain
+A clear, README is mandatory. The README MUST explain
 architecture, graph flow, templates, tools, configs, and extension paths.
 Assume the codebase is partially AI-generated and prioritize clarity.
 

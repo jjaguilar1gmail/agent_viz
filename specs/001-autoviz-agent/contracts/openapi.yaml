@@ -1,0 +1,129 @@
+openapi: 3.0.3
+info:
+  title: AutoViz Agent API
+  version: 0.1.0
+  description: Offline local API for running AutoViz Agent analyses.
+servers:
+  - url: http://localhost:8000
+paths:
+  /runs:
+    post:
+      summary: Start an analysis run
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RunRequest'
+      responses:
+        '202':
+          description: Run accepted
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunResponse'
+  /runs/{runId}:
+    get:
+      summary: Get run status and metadata
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Run status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RunStatus'
+  /runs/{runId}/artifacts:
+    get:
+      summary: List artifacts for a run
+      parameters:
+        - in: path
+          name: runId
+          required: true
+          schema:
+            type: string
+      responses:
+        '200':
+          description: Artifact list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ArtifactList'
+components:
+  schemas:
+    RunRequest:
+      type: object
+      additionalProperties: false
+      required: [dataset, question]
+      properties:
+        dataset:
+          oneOf:
+            - type: object
+              additionalProperties: false
+              required: [path]
+              properties:
+                path:
+                  type: string
+            - type: object
+              additionalProperties: false
+              required: [inline]
+              properties:
+                inline:
+                  type: string
+                  description: CSV content
+        question:
+          type: string
+        output_goal:
+          type: string
+        constraints:
+          type: object
+          additionalProperties: true
+    RunResponse:
+      type: object
+      additionalProperties: false
+      required: [run_id, status]
+      properties:
+        run_id:
+          type: string
+        status:
+          type: string
+          enum: [accepted]
+    RunStatus:
+      type: object
+      additionalProperties: false
+      required: [run_id, status]
+      properties:
+        run_id:
+          type: string
+        status:
+          type: string
+          enum: [initialized, schema_inferred, intent_classified, template_selected,
+            plan_adapted, tool_calls_compiled, tools_executed, summarized, completed,
+            repair_or_clarify, failed]
+        artifacts:
+          $ref: '#/components/schemas/ArtifactList'
+    ArtifactList:
+      type: object
+      additionalProperties: false
+      properties:
+        items:
+          type: array
+          items:
+            $ref: '#/components/schemas/Artifact'
+    Artifact:
+      type: object
+      additionalProperties: false
+      required: [artifact_type, path]
+      properties:
+        artifact_type:
+          type: string
+          enum: [chart, report, plan_template, plan_adapted, plan_diff, tool_calls, execution_log]
+        path:
+          type: string
+        mime_type:
+          type: string
