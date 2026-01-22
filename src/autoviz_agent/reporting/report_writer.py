@@ -100,6 +100,89 @@ class ReportWriter:
             self.add_header(col, level=3)
             self.add_list([f"{k}: {v}" for k, v in col_stats.items()])
 
+    def add_llm_interactions_section(self, interactions: List[Dict[str, Any]]) -> None:
+        """
+        Add LLM interactions log section.
+
+        Args:
+            interactions: List of LLM interaction records
+        """
+        if not interactions:
+            return
+            
+        self.add_header("LLM Interactions", level=2)
+        self.add_text(
+            "This section shows all interactions with the language model during analysis."
+        )
+        
+        for interaction in interactions:
+            step_name = interaction.get('step', 'unknown').replace('_', ' ').title()
+            self.add_header(step_name, level=3)
+            
+            # Input
+            input_data = interaction.get('input')
+            if isinstance(input_data, str):
+                self.add_text(f"**Question**: {input_data}")
+            elif isinstance(input_data, dict):
+                self.add_text("**Input**:")
+                self.add_list([f"{k}: {v}" for k, v in input_data.items()])
+            
+            # Output
+            output_data = interaction.get('output', {})
+            if output_data:
+                self.add_text("**Output**:")
+                if isinstance(output_data, dict):
+                    self.add_list([f"{k}: {v}" for k, v in output_data.items()])
+                else:
+                    self.add_text(str(output_data))
+            
+            self.add_text("")  # Empty line for spacing
+    
+    def add_charts_section(self, execution_results: List[Dict[str, Any]]) -> None:
+        """
+        Add generated charts section with links.
+
+        Args:
+            execution_results: List of execution results from tools
+        """
+        # Extract chart paths from results
+        charts = []
+        for result in execution_results:
+            if not result.get('success'):
+                continue
+            
+            result_data = result.get('result', {})
+            chart_path = None
+            
+            # Check for file type result
+            if result_data.get('type') == 'file':
+                chart_path = result_data.get('path')
+            # Check for value field (string path)
+            elif 'value' in result_data:
+                value = result_data['value']
+                if isinstance(value, str) and any(ext in value for ext in ['.png', '.jpg', '.svg', '.pdf']):
+                    chart_path = value
+            
+            if chart_path:
+                charts.append({
+                    'tool': result.get('tool', 'unknown'),
+                    'path': Path(chart_path)
+                })
+        
+        if not charts:
+            return
+        
+        self.add_header("Generated Visualizations", level=2)
+        self.add_text(f"This analysis generated {len(charts)} visualization(s):")
+        self.add_text("")  # Empty line
+        
+        for i, chart in enumerate(charts, 1):
+            # Relative path from report location (both in same run directory)
+            rel_path = Path('charts') / chart['path'].name
+            self.add_header(f"Figure {i}: {chart['tool']}", level=3)
+            self.add_chart_reference(rel_path, caption=f"{chart['tool']} visualization")
+            self.add_text("")  # Empty line for spacing
+    
     def add_provenance_section(
         self,
         template_path: Optional[Path] = None,

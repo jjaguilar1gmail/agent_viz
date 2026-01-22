@@ -118,6 +118,17 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
         )
         state.intent = intent
         
+        # Track LLM interaction
+        state.llm_interactions.append({
+            "step": "intent_classification",
+            "input": state.question,
+            "output": {
+                "intent": intent.label.value,
+                "confidence": float(intent.confidence),
+            },
+            "node": "classify_intent"
+        })
+        
         logger.info(f"Intent: {intent.label} (confidence={intent.confidence:.2f})")
         print(f"\n[Intent] Classified as '{intent.label.value}'")
         print(f"         Confidence: {intent.confidence:.0%}")
@@ -125,6 +136,7 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
             "current_node": "classify_intent",
             "llm_client": llm_client,
             "intent": intent,
+            "llm_interactions": state.llm_interactions,
         }
     except Exception as e:
         logger.error(f"Intent classification failed: {e}")
@@ -197,6 +209,20 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
         )
         state.adapted_plan = adapted_plan
         
+        # Track LLM interaction
+        state.llm_interactions.append({
+            "step": "plan_adaptation",
+            "input": {
+                "template": state.template_plan.get('template_id'),
+                "question": state.question
+            },
+            "output": {
+                "changes_applied": adapted_plan.get('changes_applied', 0),
+                "rationale": adapted_plan.get('adaptation_rationale', '')
+            },
+            "node": "adapt_plan"
+        })
+        
         # Save adapted plan
         adapted_path = state.artifact_manager.save_json(adapted_plan, "plan_adapted", "plan_adapted.json")
         
@@ -221,6 +247,7 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
         return {
             "current_node": "adapt_plan",
             "adapted_plan": adapted_plan,
+            "llm_interactions": state.llm_interactions,
         }
     except Exception as e:
         logger.error(f"Plan adaptation failed: {e}")
@@ -352,6 +379,14 @@ def summarize_node(state: GraphState) -> Dict[str, Any]:
         from autoviz_agent.tools.schema import get_schema_summary
         schema_summary = get_schema_summary(state.schema)
         report.add_text(schema_summary)
+        
+        # Add LLM interactions section
+        if state.llm_interactions:
+            report.add_llm_interactions_section(state.llm_interactions)
+        
+        # Add charts section
+        if state.execution_results:
+            report.add_charts_section(state.execution_results)
         
         # Add provenance section
         report.add_header("Plan Provenance", level=2)
