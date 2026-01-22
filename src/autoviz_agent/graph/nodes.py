@@ -245,7 +245,8 @@ def compile_tool_calls_node(state: GraphState) -> Dict[str, Any]:
         tool_calls = state.llm_client.generate_tool_calls(
             state.adapted_plan, 
             state.schema,
-            state.artifact_manager
+            state.artifact_manager,
+            state.question  # Pass user question for column extraction
         )
         state.tool_calls = tool_calls
         

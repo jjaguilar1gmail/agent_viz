@@ -379,7 +379,7 @@ Your JSON response:"""
         return adapted
 
     def generate_tool_calls(
-        self, plan: Dict[str, Any], schema: SchemaProfile, artifact_manager=None
+        self, plan: Dict[str, Any], schema: SchemaProfile, artifact_manager=None, user_question: str = ""
     ) -> List[Dict[str, Any]]:
         """
         Generate tool calls from plan, using ParamResolver for parameter defaults.
@@ -388,6 +388,7 @@ Your JSON response:"""
             plan: Execution plan
             schema: Dataset schema
             artifact_manager: Artifact manager for generating output paths
+            user_question: User's original question for extracting mentioned columns
 
         Returns:
             List of tool call specifications
@@ -395,8 +396,8 @@ Your JSON response:"""
         from autoviz_agent.runtime.param_resolver import ParamResolver
         from autoviz_agent.registry.validation import validate_tool_call
         
-        # Create parameter resolver
-        resolver = ParamResolver(schema, artifact_manager)
+        # Create parameter resolver with user question for column extraction
+        resolver = ParamResolver(schema, artifact_manager, user_question)
         
         tool_calls = []
         

@@ -20,6 +20,7 @@ class ParamResolver:
         self,
         schema: SchemaProfile,
         artifact_manager: Optional[ArtifactManager] = None,
+        user_question: Optional[str] = None,
     ):
         """
         Initialize parameter resolver.
@@ -27,12 +28,74 @@ class ParamResolver:
         Args:
             schema: Dataset schema profile
             artifact_manager: Artifact manager for generating output paths
+            user_question: User's original question for extracting mentioned columns
         """
         self.schema = schema
         self.artifact_manager = artifact_manager
+        self.user_question = user_question or ""
         self._temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
         self._numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'int32', 'float32']]
-        self._categorical_cols = [c.name for c in schema.columns if 'categorical' in c.roles]
+        # Get categorical columns, excluding temporal ones for better grouping defaults
+        self._categorical_cols = [
+            c.name for c in schema.columns 
+            if 'categorical' in c.roles and 'temporal' not in c.roles
+        ]
+        # Keep all categorical including temporal as backup
+        self._all_categorical_cols = [c.name for c in schema.columns if 'categorical' in c.roles]
+        # Extract columns mentioned in user question
+        self._mentioned_cols = self._extract_mentioned_columns()
+        # Extract columns mentioned in user question
+        self._mentioned_cols = self._extract_mentioned_columns()
+
+    def _extract_mentioned_columns(self) -> Dict[str, List[str]]:
+        """
+        Extract column names mentioned in user question using keyword matching.
+        
+        Returns:
+            Dict with 'categorical' and 'numeric' lists of mentioned columns
+        """
+        if not self.user_question:
+            return {'categorical': [], 'numeric': []}
+        
+        question_lower = self.user_question.lower()
+        mentioned_categorical = []
+        mentioned_numeric = []
+        
+        # Check each column name to see if it's mentioned in the question
+        # Handle variations like "product type" matching "product_category"
+        for col in self._categorical_cols + self._all_categorical_cols:
+            col_variants = [
+                col.lower(),
+                col.lower().replace('_', ' '),  # product_category -> product category
+                col.lower().replace('_', ''),   # product_category -> productcategory
+            ]
+            # Also check for partial matches (e.g., "product" in "product type" matching "product_category")
+            col_parts = col.lower().split('_')
+            
+            # Check exact and underscore variants
+            if any(variant in question_lower for variant in col_variants):
+                if col not in mentioned_categorical:
+                    mentioned_categorical.append(col)
+            # Check if any significant part of column name appears in question
+            # (e.g., "product" from "product_category" matching "product type")
+            elif any(len(part) > 3 and part in question_lower for part in col_parts):
+                if col not in mentioned_categorical:
+                    mentioned_categorical.append(col)
+        
+        for col in self._numeric_cols:
+            col_variants = [
+                col.lower(),
+                col.lower().replace('_', ' '),
+                col.lower().replace('_', ''),
+            ]
+            if any(variant in question_lower for variant in col_variants):
+                if col not in mentioned_numeric:
+                    mentioned_numeric.append(col)
+        
+        if mentioned_categorical or mentioned_numeric:
+            logger.info(f"Extracted from question - categorical: {mentioned_categorical}, numeric: {mentioned_numeric}")
+        
+        return {'categorical': mentioned_categorical, 'numeric': mentioned_numeric}
 
     def resolve(self, tool_name: str, params: Dict[str, Any], sequence: int = 1) -> Dict[str, Any]:
         """
@@ -125,11 +188,28 @@ class ParamResolver:
     def _resolve_plot_bar(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Resolve parameters for bar plot."""
         if "x" not in params or params.get("x") == "auto":
-            if self._categorical_cols:
+            # Priority 1: Categorical mentioned in question
+            if self._mentioned_cols['categorical']:
+                params["x"] = self._mentioned_cols['categorical'][0]
+            # Priority 2: Non-temporal categorical
+            elif self._categorical_cols:
                 params["x"] = self._categorical_cols[0]
+            # Priority 3: All categorical
+            elif self._all_categorical_cols:
+                params["x"] = self._all_categorical_cols[0]
         if "y" not in params or params.get("y") == "auto":
-            if self._numeric_cols:
+            # Priority 1: Numeric mentioned in question
+            if self._mentioned_cols['numeric']:
+                params["y"] = self._mentioned_cols['numeric'][0]
+            # Priority 2: First numeric column
+            elif self._numeric_cols:
                 params["y"] = self._numeric_cols[0]
+        # Add hue for second categorical dimension
+        if "hue" not in params:
+            # If user mentioned 2+ categoricals, use second one for hue
+            if len(self._mentioned_cols['categorical']) >= 2:
+                params["hue"] = self._mentioned_cols['categorical'][1]
+                logger.info(f"Using second mentioned column as hue: {params['hue']}")
         return params
 
     def _resolve_plot_scatter(self, params: Dict[str, Any]) -> Dict[str, Any]:
@@ -170,15 +250,27 @@ class ParamResolver:
         """Resolve parameters for aggregate tool."""
         # Handle group_by parameter
         if "group_by" not in params or params.get("group_by") == "auto" or params.get("group_by") == ["auto"]:
-            if self._categorical_cols:
+            # Priority 1: Use columns mentioned in user question
+            if self._mentioned_cols['categorical']:
+                params["group_by"] = self._mentioned_cols['categorical'][:2]
+                logger.info(f"Using mentioned columns for grouping: {params['group_by']}")
+            # Priority 2: Non-temporal categorical columns
+            elif self._categorical_cols:
                 params["group_by"] = self._categorical_cols[:2]  # Use up to 2 categorical columns
+            # Priority 3: All categorical (including temporal) as last resort
+            elif self._all_categorical_cols:
+                params["group_by"] = self._all_categorical_cols[:2]
             else:
                 params["group_by"] = []
         
         # Handle agg_map parameter
         if "agg_map" not in params or params.get("agg_map") == "auto":
-            if self._numeric_cols:
-                # Default to sum aggregation of all numeric columns
+            # Priority 1: Use numeric column mentioned in question
+            if self._mentioned_cols['numeric']:
+                params["agg_map"] = {self._mentioned_cols['numeric'][0]: "sum"}
+                logger.info(f"Using mentioned metric: {self._mentioned_cols['numeric'][0]}")
+            # Priority 2: All numeric columns
+            elif self._numeric_cols:
                 params["agg_map"] = {col: "sum" for col in self._numeric_cols}
             else:
                 params["agg_map"] = {}
@@ -188,10 +280,21 @@ class ParamResolver:
     def _resolve_segment_metric(self, params: Dict[str, Any]) -> Dict[str, Any]:
         """Resolve parameters for segment_metric tool."""
         if "segment_by" not in params or params.get("segment_by") == "auto":
-            if self._categorical_cols:
+            # Priority 1: Categorical mentioned in question
+            if self._mentioned_cols['categorical']:
+                params["segment_by"] = self._mentioned_cols['categorical'][0]
+            # Priority 2: Non-temporal categorical
+            elif self._categorical_cols:
                 params["segment_by"] = self._categorical_cols[0]
+            # Priority 3: All categorical
+            elif self._all_categorical_cols:
+                params["segment_by"] = self._all_categorical_cols[0]
         if "metric" not in params or params.get("metric") == "auto":
-            if self._numeric_cols:
+            # Priority 1: Numeric mentioned in question
+            if self._mentioned_cols['numeric']:
+                params["metric"] = self._mentioned_cols['numeric'][0]
+            # Priority 2: First numeric column
+            elif self._numeric_cols:
                 params["metric"] = self._numeric_cols[0]
         if "agg" not in params:
             params["agg"] = "mean"
