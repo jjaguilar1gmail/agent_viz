@@ -15,6 +15,7 @@ class ToolParameter(BaseModel):
     description: str = Field(..., description="Parameter description")
     required: bool = Field(default=True, description="Whether parameter is required")
     default: Optional[Any] = Field(None, description="Default value")
+    role: Optional[str] = Field(None, description="Column role hint (temporal/numeric/categorical/any)")
 
 
 class ToolSchema(BaseModel):

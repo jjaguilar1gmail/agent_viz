@@ -394,12 +394,13 @@ Your JSON response:"""
             List of tool call specifications
         """
         from autoviz_agent.runtime.param_resolver import ParamResolver
-        from autoviz_agent.registry.validation import validate_tool_call
+        from autoviz_agent.registry.validation import validate_tool_call, repair_tool_call
         
         # Create parameter resolver with user question for column extraction
         resolver = ParamResolver(schema, artifact_manager, user_question)
         
         tool_calls = []
+        dropped_calls = []
         
         for idx, step in enumerate(plan.get("steps", []), start=1):
             tool_name = step.get("tool")
@@ -416,15 +417,27 @@ Your JSON response:"""
                 "description": step.get("description", ""),
             }
             
-            # Validate tool call before adding
+            # Validate tool call - strict mode with repair
             validation_result = validate_tool_call(tool_call)
             if not validation_result.is_valid:
                 logger.warning(
                     f"Tool call validation failed for {tool_name}: {validation_result.errors}"
                 )
-                # Continue anyway but log warnings
-            
-            tool_calls.append(tool_call)
+                # Attempt repair
+                repaired_call = repair_tool_call(tool_call)
+                validation_result = validate_tool_call(repaired_call)
+                
+                if validation_result.is_valid:
+                    logger.info(f"Successfully repaired tool call: {tool_name}")
+                    tool_calls.append(repaired_call)
+                else:
+                    logger.error(f"Cannot repair tool call for {tool_name}, dropping it")
+                    dropped_calls.append({"tool": tool_name, "errors": validation_result.errors})
+            else:
+                tool_calls.append(tool_call)
         
-        logger.info(f"Generated {len(tool_calls)} tool calls from plan")
+        if dropped_calls:
+            logger.warning(f"Dropped {len(dropped_calls)} invalid tool calls: {[d['tool'] for d in dropped_calls]}")
+        
+        logger.info(f"Generated {len(tool_calls)} valid tool calls from plan")
         return tool_calls

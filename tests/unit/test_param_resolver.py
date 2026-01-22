@@ -72,13 +72,14 @@ def test_resolver_initialization(sample_schema):
     """Test resolver initializes correctly."""
     resolver = ParamResolver(sample_schema)
     
-    assert len(resolver._temporal_cols) == 1
-    assert "date" in resolver._temporal_cols
-    assert len(resolver._numeric_cols) == 2
-    assert "revenue" in resolver._numeric_cols
-    assert "quantity" in resolver._numeric_cols
-    assert len(resolver._categorical_cols) == 1
-    assert "category" in resolver._categorical_cols
+    assert resolver.column_selector is not None
+    assert len(resolver.column_selector.get_temporal_cols()) == 1
+    assert "date" in resolver.column_selector.get_temporal_cols()
+    assert len(resolver.column_selector.get_numeric_cols()) == 2
+    assert "revenue" in resolver.column_selector.get_numeric_cols()
+    assert "quantity" in resolver.column_selector.get_numeric_cols()
+    assert len(resolver.column_selector.get_categorical_cols()) == 1
+    assert "category" in resolver.column_selector.get_categorical_cols()
 
 
 def test_resolve_plot_line(sample_schema, mock_artifact_manager):

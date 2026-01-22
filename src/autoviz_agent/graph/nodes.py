@@ -119,8 +119,8 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
         state.intent = intent
         
         logger.info(f"Intent: {intent.label} (confidence={intent.confidence:.2f})")
-        print(f"\n🎯 I classified your question as '{intent.label.value}'")
-        print(f"   Confidence: {intent.confidence:.0%}")
+        print(f"\n[Intent] Classified as '{intent.label.value}'")
+        print(f"         Confidence: {intent.confidence:.0%}")
         return {
             "current_node": "classify_intent",
             "llm_client": llm_client,
@@ -164,7 +164,7 @@ def select_template_node(state: GraphState) -> Dict[str, Any]:
         )
         
         logger.info(f"Selected template: {selected_template.get('template_id')}")
-        print(f"\n📋 I selected the '{selected_template.get('template_id')}' template")
+        print(f"\n[Template] I selected the '{selected_template.get('template_id')}' template")
         template_name = selected_template.get('name', selected_template.get('template_id'))
         print(f"   Template: {template_name}")
         print(f"   Reason: Best match for {state.intent.label.value} intent")
@@ -210,13 +210,13 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
         
         adaptation_rationale = adapted_plan.get('adaptation_rationale', '')
         if changes_applied > 0:
-            print(f"\n🔧 I adapted the plan with {changes_applied} change(s)")
+            print(f"\n[Adapted] Plan modified with {changes_applied} change(s)")
             if adaptation_rationale:
-                print(f"   Reason: {adaptation_rationale}")
+                print(f"          Reason: {adaptation_rationale}")
         else:
-            print(f"\n✅ The template fits your question well - no adaptations needed")
+            print(f"\n[Ready] Template fits your question - no adaptations needed")
             if adaptation_rationale:
-                print(f"   Note: {adaptation_rationale}")
+                print(f"        Note: {adaptation_rationale}")
         
         return {
             "current_node": "adapt_plan",
@@ -254,11 +254,11 @@ def compile_tool_calls_node(state: GraphState) -> Dict[str, Any]:
         tool_calls_path = state.artifact_manager.save_json(tool_calls, "tool_calls", "tool_calls.json")
         
         logger.info(f"Compiled {len(tool_calls)} tool calls")
-        print(f"\n🔨 I prepared {len(tool_calls)} analysis steps")
+        print(f"\n[Tools] Prepared {len(tool_calls)} analysis steps")
         for i, tc in enumerate(tool_calls[:3], 1):
-            print(f"   {i}. {tc['tool']} - {tc.get('description', '')}")
+            print(f"        {i}. {tc['tool']} - {tc.get('description', '')}")
         if len(tool_calls) > 3:
-            print(f"   ... and {len(tool_calls) - 3} more steps")
+            print(f"        ... and {len(tool_calls) - 3} more steps")
         return {
             "current_node": "compile_tool_calls",
             "tool_calls": tool_calls,
@@ -314,7 +314,7 @@ def execute_tools_node(state: GraphState) -> Dict[str, Any]:
         
         successful = sum(1 for r in results if r.get('success'))
         failed = len(results) - successful
-        print(f"\n✨ Execution complete: {successful} successful, {failed} failed")
+        print(f"\n[Complete] {successful} successful, {failed} failed")
         
         return {
             "current_node": "execute_tools",
@@ -403,15 +403,15 @@ def error_node(state: GraphState) -> Dict[str, Any]:
     logger.error(f"Error node reached: {error_msg}")
     
     # Show user-friendly error message
-    print(f"\n❌ Error: {error_msg}")
+    print(f"\n[ERROR] {error_msg}")
     
     # Provide helpful hints based on error type
     if "not found" in error_msg.lower():
-        print("   💡 Tip: Check that the file path is correct and the file exists")
+        print("        Tip: Check that the file path is correct and the file exists")
     elif "permission" in error_msg.lower():
-        print("   💡 Tip: Check file permissions or try running with appropriate access")
+        print("   [TIP] Check file permissions or try running with appropriate access")
     elif "columns" in error_msg.lower() or "schema" in error_msg.lower():
-        print("   💡 Tip: The dataset may be empty or improperly formatted")
+        print("   [TIP] The dataset may be empty or improperly formatted")
     
     state.current_node = "error"
     
