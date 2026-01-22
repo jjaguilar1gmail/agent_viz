@@ -186,12 +186,13 @@ class LLMClient:
         
         return f"""Classify the user's analytical intent based on their question and the dataset structure.
 
-AVAILABLE INTENTS:
-1. general_eda - Broad exploration (e.g., "summarize this data", "what's in here?")
+AVAILABLE INTENTS (with templates):
+1. general_eda - Broad exploration (e.g., "summarize this data", "what's in here?") [ALWAYS AVAILABLE]
 2. time_series_investigation - Temporal patterns (e.g., "trends over time", "seasonal patterns")
 3. anomaly_detection - Outliers and unusual values (e.g., "find anomalies", "detect outliers")
-4. segmentation_drivers - Group differences (e.g., "compare regions", "what drives revenue by segment?")
-5. comparative_analysis - Side-by-side comparisons (e.g., "compare A vs B")
+
+IMPORTANT: If the question doesn't clearly match time_series or anomaly_detection, choose general_eda.
+For comparison questions like "compare regions" or "segment analysis", use general_eda.
 
 USER QUESTION: "{question}"
 
@@ -290,7 +291,13 @@ EXAMPLES:
 - If template fits perfectly → return empty changes array
 
 RESPONSE FORMAT (JSON only, no preamble):
-{{"changes": [{{"action": "add|remove|modify", "step_id": "<id>", "reason": "<specific reason>"}}], "rationale": "<overall explanation of changes or 'Template fits user question well'>"}}
+{{"changes": [{{"action": "add|remove|modify", "step_id": "<id>", "tool": "<tool_name>", "description": "<reason>", "params": {{"df": "$dataframe"}}}}], "rationale": "<overall explanation of changes or 'Template fits user question well'>"}}
+
+IMPORTANT: When action is "add", you MUST provide:
+- step_id: unique identifier (e.g., "detect_outliers")
+- tool: exact tool name (e.g., "detect_anomalies", "plot_line", "compute_summary_stats")
+- description: what this step does
+- params: at minimum {{"df": "$dataframe"}}
 
 Your JSON response:"""
 
@@ -309,7 +316,17 @@ Your JSON response:"""
                 for step in adapted.get("steps", []):
                     if step.get("step_id") == step_id:
                         step["params"].update(change.get("params", {}))
-            # "add" would insert new steps (more complex)
+            elif action == "add":
+                # Add new step from change specification
+                new_step = {
+                    "step_id": step_id,
+                    "tool": change.get("tool", "unknown"),
+                    "description": change.get("description", change.get("reason", "")),
+                    "params": change.get("params", {"df": "$dataframe"})
+                }
+                # Insert at the end or at a specific position if provided
+                insert_position = change.get("position", len(adapted.get("steps", [])))
+                adapted.setdefault("steps", []).insert(insert_position, new_step)
         
         return adapted
 
@@ -374,6 +391,8 @@ Your JSON response:"""
                         params["output_path"] = str(artifact_manager.get_path("chart", f"histogram_{idx}.png"))
                     else:
                         params["output_path"] = f"histogram_{idx}.png"
+                # Remove max_columns if present (not a valid parameter)
+                params.pop("max_columns", None)
             
             elif tool_name == "plot_bar":
                 # Need x, y, and output_path
@@ -385,11 +404,49 @@ Your JSON response:"""
             
             elif tool_name == "plot_scatter":
                 # Need x, y, and output_path
+                if "x" not in params and numeric_cols:
+                    params["x"] = numeric_cols[0] if len(numeric_cols) > 0 else "index"
+                if "y" not in params and numeric_cols:
+                    params["y"] = numeric_cols[1] if len(numeric_cols) > 1 else numeric_cols[0]
                 if "output_path" not in params:
                     if artifact_manager:
                         params["output_path"] = str(artifact_manager.get_path("chart", f"scatter_{idx}.png"))
                     else:
                         params["output_path"] = f"scatter_{idx}.png"
+                # Remove highlight_anomalies if present (not a valid parameter)
+                params.pop("highlight_anomalies", None)
+            
+            elif tool_name == "plot_boxplot":
+                # Need column and output_path
+                if "column" not in params and numeric_cols:
+                    params["column"] = numeric_cols[0]
+                if "output_path" not in params:
+                    if artifact_manager:
+                        params["output_path"] = str(artifact_manager.get_path("chart", f"boxplot_{idx}.png"))
+                    else:
+                        params["output_path"] = f"boxplot_{idx}.png"
+            
+            elif tool_name == "plot_heatmap":
+                # Need data (DataFrame) and output_path
+                # data comes from df parameter, need to rename it
+                if "df" in params:
+                    params["data"] = params.pop("df")
+                if "output_path" not in params:
+                    if artifact_manager:
+                        params["output_path"] = str(artifact_manager.get_path("chart", f"heatmap_{idx}.png"))
+                    else:
+                        params["output_path"] = f"heatmap_{idx}.png"
+                # Rename annotation to annot
+                if "annotation" in params:
+                    params["annot"] = params.pop("annotation")
+                # Add select_numeric flag to filter only numeric columns
+                if "select_numeric" not in params:
+                    params["select_numeric"] = True
+            
+            elif tool_name == "compute_distributions":
+                # Need column
+                if "column" not in params and numeric_cols:
+                    params["column"] = numeric_cols[0]
             
             elif tool_name == "detect_anomalies":
                 # Need column

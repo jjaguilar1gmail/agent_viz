@@ -23,6 +23,23 @@ from autoviz_agent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
+def should_continue(state: GraphState) -> str:
+    """
+    Determine if pipeline should continue or handle error.
+    
+    Args:
+        state: Current graph state
+        
+    Returns:
+        Next node name
+    """
+    if hasattr(state, "current_node") and state.current_node == "error":
+        return "error"
+    if hasattr(state, "error_message") and state.error_message:
+        return "error"
+    return "continue"
+
+
 def build_graph() -> StateGraph:
     """
     Build the LangGraph execution pipeline.
@@ -49,15 +66,48 @@ def build_graph() -> StateGraph:
     # Set entry point
     workflow.set_entry_point("initialize")
 
-    # Add edges (linear flow for now, will add conditional routing later)
-    workflow.add_edge("initialize", "infer_schema")
-    workflow.add_edge("infer_schema", "classify_intent")
-    workflow.add_edge("classify_intent", "select_template")
-    workflow.add_edge("select_template", "adapt_plan")
-    workflow.add_edge("adapt_plan", "compile_tool_calls")
-    workflow.add_edge("compile_tool_calls", "execute_tools")
-    workflow.add_edge("execute_tools", "summarize")
-    workflow.add_edge("summarize", "complete")
+    # Add conditional edges for error handling
+    workflow.add_conditional_edges(
+        "initialize",
+        should_continue,
+        {"continue": "infer_schema", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "infer_schema",
+        should_continue,
+        {"continue": "classify_intent", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "classify_intent",
+        should_continue,
+        {"continue": "select_template", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "select_template",
+        should_continue,
+        {"continue": "adapt_plan", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "adapt_plan",
+        should_continue,
+        {"continue": "compile_tool_calls", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "compile_tool_calls",
+        should_continue,
+        {"continue": "execute_tools", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "execute_tools",
+        should_continue,
+        {"continue": "summarize", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "summarize",
+        should_continue,
+        {"continue": "complete", "error": "error"}
+    )
+    
     workflow.add_edge("complete", END)
 
     # Error handling edges

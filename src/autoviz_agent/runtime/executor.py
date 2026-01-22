@@ -43,6 +43,10 @@ class ToolExecutor:
             ToolSchema(name="sample_rows", description="Sample rows from DataFrame", returns="DataFrame"),
             data_io.sample_rows,
         )
+        TOOL_REGISTRY.register(
+            ToolSchema(name="save_dataframe", description="Save DataFrame to file", returns="None"),
+            data_io.save_dataframe,
+        )
 
         # Schema tools
         TOOL_REGISTRY.register(
@@ -59,6 +63,14 @@ class ToolExecutor:
             ToolSchema(name="parse_datetime", description="Parse datetime columns", returns="DataFrame"),
             prep.parse_datetime,
         )
+        TOOL_REGISTRY.register(
+            ToolSchema(name="cast_types", description="Convert column types", returns="DataFrame"),
+            prep.cast_types,
+        )
+        TOOL_REGISTRY.register(
+            ToolSchema(name="normalize_column_names", description="Clean column names", returns="DataFrame"),
+            prep.normalize_column_names,
+        )
 
         # Metrics tools
         TOOL_REGISTRY.register(
@@ -68,6 +80,18 @@ class ToolExecutor:
         TOOL_REGISTRY.register(
             ToolSchema(name="compute_correlations", description="Compute correlation matrix", returns="DataFrame"),
             metrics.compute_correlations,
+        )
+        TOOL_REGISTRY.register(
+            ToolSchema(name="compute_value_counts", description="Count unique values", returns="DataFrame"),
+            metrics.compute_value_counts,
+        )
+        TOOL_REGISTRY.register(
+            ToolSchema(name="compute_percentiles", description="Compute percentiles", returns="Dict"),
+            metrics.compute_percentiles,
+        )
+        TOOL_REGISTRY.register(
+            ToolSchema(name="aggregate", description="Aggregate data by groups", returns="DataFrame"),
+            metrics.aggregate,
         )
 
         # Analysis tools
@@ -82,6 +106,14 @@ class ToolExecutor:
         TOOL_REGISTRY.register(
             ToolSchema(name="compute_distributions", description="Compute distribution statistics", returns="Dict"),
             analysis.compute_distributions,
+        )
+        TOOL_REGISTRY.register(
+            ToolSchema(name="compare_groups", description="Compare metrics across groups", returns="DataFrame"),
+            analysis.compare_groups,
+        )
+        TOOL_REGISTRY.register(
+            ToolSchema(name="compute_time_series_features", description="Extract time series features", returns="Dict"),
+            analysis.compute_time_series_features,
         )
 
         # Visualization tools
@@ -104,6 +136,10 @@ class ToolExecutor:
         TOOL_REGISTRY.register(
             ToolSchema(name="plot_heatmap", description="Create heatmap", returns="Path"),
             visualization.plot_heatmap,
+        )
+        TOOL_REGISTRY.register(
+            ToolSchema(name="plot_boxplot", description="Create box plot", returns="Path"),
+            visualization.plot_boxplot,
         )
 
         logger.info(f"Registered {len(TOOL_REGISTRY.list_tools())} tools")

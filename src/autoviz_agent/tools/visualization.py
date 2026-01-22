@@ -190,6 +190,7 @@ def plot_heatmap(
     title: Optional[str] = None,
     cmap: str = "coolwarm",
     annot: bool = True,
+    select_numeric: bool = False,
 ) -> Path:
     """
     Create a heatmap (e.g., correlation matrix).
@@ -200,12 +201,21 @@ def plot_heatmap(
         title: Plot title
         cmap: Color map
         annot: Whether to annotate cells
+        select_numeric: If True, select only numeric columns and compute correlation
 
     Returns:
         Path to saved plot
     """
     plt.rcParams.update(get_deterministic_style())
     fig, ax = plt.subplots(figsize=(10, 8))
+
+    # If select_numeric is True, filter to numeric columns and compute correlation
+    if select_numeric:
+        numeric_df = data.select_dtypes(include=['number'])
+        if numeric_df.empty:
+            raise ValueError("No numeric columns found for heatmap")
+        # Compute correlation matrix for numeric columns
+        data = numeric_df.corr()
 
     sns.heatmap(data, annot=annot, fmt=".2f", cmap=cmap, ax=ax, cbar_kws={"shrink": 0.8})
     ax.set_title(title or "Heatmap")

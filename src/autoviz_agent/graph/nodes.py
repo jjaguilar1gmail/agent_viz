@@ -200,8 +200,9 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
         # Save adapted plan
         adapted_path = state.artifact_manager.save_json(adapted_plan, "plan_adapted", "plan_adapted.json")
         
-        # Generate and save diff
-        diff_text = generate_diff(state.template_plan, adapted_plan)
+        # Generate and save diff with rationale
+        rationale = adapted_plan.get('adaptation_rationale', '')
+        diff_text = generate_diff(state.template_plan, adapted_plan, rationale)
         diff_path = state.artifact_manager.save_text(diff_text, "plan_diff", "plan_diff.md")
         
         changes_applied = adapted_plan.get('changes_applied', 0)
@@ -397,7 +398,20 @@ def error_node(state: GraphState) -> Dict[str, Any]:
     Returns:
         Updated state
     """
-    logger.error(f"Error node reached: {state.get('error_message', 'Unknown error')}")
+    error_msg = getattr(state, 'error_message', 'Unknown error')
+    logger.error(f"Error node reached: {error_msg}")
+    
+    # Show user-friendly error message
+    print(f"\n❌ Error: {error_msg}")
+    
+    # Provide helpful hints based on error type
+    if "not found" in error_msg.lower():
+        print("   💡 Tip: Check that the file path is correct and the file exists")
+    elif "permission" in error_msg.lower():
+        print("   💡 Tip: Check file permissions or try running with appropriate access")
+    elif "columns" in error_msg.lower() or "schema" in error_msg.lower():
+        print("   💡 Tip: The dataset may be empty or improperly formatted")
+    
     state.current_node = "error"
     
     return {

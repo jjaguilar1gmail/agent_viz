@@ -112,8 +112,25 @@ class PlanRetrieval:
             ValueError: If no matching templates found
         """
         candidates = self.retrieve(intent, schema, top_k=1)
+        
+        # Fallback: If no exact intent match, try with general_eda
         if not candidates:
-            raise ValueError(f"No matching templates for intent={intent.label}")
+            logger.warning(f"No templates found for intent={intent.label}, falling back to general_eda")
+            
+            # Try to find a general_eda template
+            for template_id, template in self.templates.items():
+                if "general_eda" in template.get("intents", []):
+                    logger.info(f"Selected fallback template: {template_id}")
+                    return template_id
+            
+            # If still no match, just pick the first available template
+            if self.templates:
+                fallback_id = next(iter(self.templates.keys()))
+                logger.warning(f"Using first available template as last resort: {fallback_id}")
+                return fallback_id
+            
+            # Truly no templates available
+            raise ValueError(f"No templates available in the system")
 
         template_id, score = candidates[0]
         logger.info(f"Selected template: {template_id} (score={score:.2f})")
