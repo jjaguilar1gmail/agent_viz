@@ -59,9 +59,15 @@ def validate_tool_call(tool_call: Dict[str, Any]) -> ValidationResult:
         errors.append(f"Unknown tool: {tool_name}")
         return ValidationResult(is_valid=False, tool_name=tool_name, errors=errors)
 
-    # Validate using Pydantic model
+    # Validate using Pydantic model - only validate the core fields
     try:
-        ToolCallRequest(**tool_call)
+        # Create a minimal tool call for validation (exclude metadata fields)
+        minimal_call = {
+            "tool": tool_call.get("tool"),
+            "sequence": tool_call.get("sequence", 1),
+            "args": tool_call.get("args", {})
+        }
+        ToolCallRequest(**minimal_call)
     except ValidationError as e:
         for error in e.errors():
             field = ".".join(str(loc) for loc in error["loc"])

@@ -5,11 +5,13 @@ from typing import Any, Optional, Union
 
 import pandas as pd
 
+from autoviz_agent.registry.tools import tool
 from autoviz_agent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
+@tool(description="Load dataset from file")
 def load_dataset(path: Union[str, Path], **kwargs) -> pd.DataFrame:
     """
     Load dataset from file.
@@ -38,6 +40,7 @@ def load_dataset(path: Union[str, Path], **kwargs) -> pd.DataFrame:
         raise ValueError(f"Unsupported file format: {path.suffix}")
 
 
+@tool(description="Sample rows from DataFrame")
 def sample_rows(df: pd.DataFrame, n: int = 5, random_state: Optional[int] = 42) -> pd.DataFrame:
     """
     Sample rows from DataFrame deterministically.
@@ -59,6 +62,7 @@ def sample_rows(df: pd.DataFrame, n: int = 5, random_state: Optional[int] = 42) 
         return df.head(n)
 
 
+@tool(description="Save DataFrame to file")
 def save_dataframe(df: pd.DataFrame, path: Union[str, Path], **kwargs) -> None:
     """
     Save DataFrame to file.

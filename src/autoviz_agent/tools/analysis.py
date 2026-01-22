@@ -5,11 +5,13 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
+from autoviz_agent.registry.tools import tool
 from autoviz_agent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
+@tool(description="Detect anomalies")
 def detect_anomalies(
     df: pd.DataFrame, column: str, method: str = "iqr", threshold: float = 1.5
 ) -> pd.DataFrame:
@@ -48,6 +50,7 @@ def detect_anomalies(
     return result
 
 
+@tool(description="Segment metric by category")
 def segment_metric(
     df: pd.DataFrame, segment_by: str, metric: str, agg: str = "mean"
 ) -> pd.DataFrame:
@@ -81,6 +84,7 @@ def segment_metric(
     return result
 
 
+@tool(description="Compute distribution statistics")
 def compute_distributions(df: pd.DataFrame, column: str, bins: int = 10) -> Dict[str, Any]:
     """
     Compute distribution statistics.
@@ -115,6 +119,7 @@ def compute_distributions(df: pd.DataFrame, column: str, bins: int = 10) -> Dict
     return dist
 
 
+@tool(description="Compare metrics across groups")
 def compare_groups(
     df: pd.DataFrame, group_col: str, metric_col: str, groups: Optional[List[str]] = None
 ) -> Dict[str, Any]:
@@ -149,6 +154,7 @@ def compare_groups(
     return comparison
 
 
+@tool(description="Extract time series features")
 def compute_time_series_features(
     df: pd.DataFrame, date_col: str, value_col: str
 ) -> Dict[str, Any]:

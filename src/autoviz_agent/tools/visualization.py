@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
+from autoviz_agent.registry.tools import tool
 from autoviz_agent.runtime.determinism import configure_matplotlib_backend, get_deterministic_style
 from autoviz_agent.utils.logging import get_logger
 
@@ -17,6 +18,7 @@ logger = get_logger(__name__)
 configure_matplotlib_backend()
 
 
+@tool(description="Create line plot")
 def plot_line(
     df: pd.DataFrame,
     x: str,
@@ -58,6 +60,7 @@ def plot_line(
     return output_path
 
 
+@tool(description="Create bar plot")
 def plot_bar(
     df: pd.DataFrame,
     x: str,
@@ -101,6 +104,7 @@ def plot_bar(
     return output_path
 
 
+@tool(description="Create scatter plot")
 def plot_scatter(
     df: pd.DataFrame,
     x: str,
@@ -147,6 +151,7 @@ def plot_scatter(
     return output_path
 
 
+@tool(description="Create histogram")
 def plot_histogram(
     df: pd.DataFrame,
     column: str,
@@ -184,6 +189,7 @@ def plot_histogram(
     return output_path
 
 
+@tool(description="Create heatmap")
 def plot_heatmap(
     data: pd.DataFrame,
     output_path: Path,
@@ -228,6 +234,7 @@ def plot_heatmap(
     return output_path
 
 
+@tool(description="Create box plot")
 def plot_boxplot(
     df: pd.DataFrame,
     column: str,

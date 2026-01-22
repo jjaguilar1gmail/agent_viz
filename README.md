@@ -90,14 +90,33 @@ Example template structure:
 
 ### Tool Registry
 
-All tools are registered with schemas that define:
+**New in v2.0**: The tool registry now uses a **decorator-based auto-registration** system.
 
-- Tool name
-- Parameters (name, type, required, default)
-- Return type
-- Description
+All tools are automatically registered using the `@tool` decorator:
 
-Tool calls are validated against schemas with `extra=forbid` to reject unknown parameters.
+```python
+from autoviz_agent.registry.tools import tool
+
+@tool(description="Load dataset from CSV file")
+def load_dataset(path: str, encoding: str = "utf-8") -> pd.DataFrame:
+    """Load dataset from file."""
+    ...
+```
+
+The decorator extracts metadata from function signatures and docstrings:
+- Parameter names, types, defaults, and descriptions
+- Return type from type hints
+- Required vs optional parameters
+
+Tool calls are validated against registered schemas before execution. The registry provides:
+- `TOOL_REGISTRY.list_tools()`: List all registered tools
+- `TOOL_REGISTRY.get_tool(name)`: Get tool function
+- `TOOL_REGISTRY.get_schema(name)`: Get tool schema
+- `TOOL_REGISTRY.export_schema()`: Export JSON schema for LLM
+
+**Parameter Resolution**: Missing parameters are automatically filled using `ParamResolver`, which uses dataset schema to select appropriate columns and generate output paths.
+
+For more details, see [TOOL_CALLING.md](TOOL_CALLING.md).
 
 ### Configuration
 

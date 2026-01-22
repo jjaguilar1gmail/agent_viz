@@ -382,7 +382,7 @@ Your JSON response:"""
         self, plan: Dict[str, Any], schema: SchemaProfile, artifact_manager=None
     ) -> List[Dict[str, Any]]:
         """
-        Generate tool calls from plan, filling in schema-derived parameters.
+        Generate tool calls from plan, using ParamResolver for parameter defaults.
 
         Args:
             plan: Execution plan
@@ -392,166 +392,37 @@ Your JSON response:"""
         Returns:
             List of tool call specifications
         """
-        from pathlib import Path
+        from autoviz_agent.runtime.param_resolver import ParamResolver
+        from autoviz_agent.registry.validation import validate_tool_call
+        
+        # Create parameter resolver
+        resolver = ParamResolver(schema, artifact_manager)
         
         tool_calls = []
-        
-        # Get temporal and numeric columns from schema
-        temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
-        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'int32', 'float32']]
         
         for idx, step in enumerate(plan.get("steps", []), start=1):
             tool_name = step.get("tool")
             params = step.get("params", {}).copy()
             
-            # Auto-fill missing parameters based on tool type and schema
-            if tool_name == "parse_datetime" and "columns" not in params:
-                # Use first temporal column or try to detect date column
-                if temporal_cols:
-                    params["columns"] = temporal_cols
-                else:
-                    date_cols = [c.name for c in schema.columns if 'date' in c.name.lower() or 'time' in c.name.lower()]
-                    if date_cols:
-                        params["columns"] = date_cols
-                # Remove auto_detect if present (not a valid parameter)
-                params.pop("auto_detect", None)
-            
-            elif tool_name == "plot_line":
-                # Need x, y, and output_path
-                if "x" not in params and temporal_cols:
-                    params["x"] = temporal_cols[0]
-                if "y" not in params and numeric_cols:
-                    params["y"] = numeric_cols[0]
-                if "output_path" not in params:
-                    if artifact_manager:
-                        params["output_path"] = str(artifact_manager.get_path("chart", f"line_plot_{idx}.png"))
-                    else:
-                        params["output_path"] = f"line_plot_{idx}.png"
-                # Remove show_trend if present (not a valid parameter)
-                params.pop("show_trend", None)
-            
-            elif tool_name == "plot_histogram":
-                # Need column and output_path
-                if "column" not in params and numeric_cols:
-                    params["column"] = numeric_cols[0]
-                if "output_path" not in params:
-                    if artifact_manager:
-                        params["output_path"] = str(artifact_manager.get_path("chart", f"histogram_{idx}.png"))
-                    else:
-                        params["output_path"] = f"histogram_{idx}.png"
-                # Remove max_columns if present (not a valid parameter)
-                params.pop("max_columns", None)
-            
-            elif tool_name == "plot_bar":
-                # Need x, y, and output_path
-                # For comparative analysis, x is categorical, y is numeric
-                categorical_cols = [c.name for c in schema.columns if 'categorical' in c.roles]
-                
-                if "x" not in params or params.get("x") == "auto":
-                    if categorical_cols:
-                        params["x"] = categorical_cols[0]
-                
-                if "y" not in params or params.get("y") == "auto":
-                    if numeric_cols:
-                        params["y"] = numeric_cols[0]
-                
-                if "output_path" not in params:
-                    if artifact_manager:
-                        params["output_path"] = str(artifact_manager.get_path("chart", f"bar_plot_{idx}.png"))
-                    else:
-                        params["output_path"] = f"bar_plot_{idx}.png"
-            
-            elif tool_name == "plot_scatter":
-                # Need x, y, and output_path
-                if "x" not in params and numeric_cols:
-                    params["x"] = numeric_cols[0] if len(numeric_cols) > 0 else "index"
-                if "y" not in params and numeric_cols:
-                    params["y"] = numeric_cols[1] if len(numeric_cols) > 1 else numeric_cols[0]
-                if "output_path" not in params:
-                    if artifact_manager:
-                        params["output_path"] = str(artifact_manager.get_path("chart", f"scatter_{idx}.png"))
-                    else:
-                        params["output_path"] = f"scatter_{idx}.png"
-                # Remove highlight_anomalies if present (not a valid parameter)
-                params.pop("highlight_anomalies", None)
-            
-            elif tool_name == "plot_boxplot":
-                # Need column and output_path
-                if "column" not in params and numeric_cols:
-                    params["column"] = numeric_cols[0]
-                if "output_path" not in params:
-                    if artifact_manager:
-                        params["output_path"] = str(artifact_manager.get_path("chart", f"boxplot_{idx}.png"))
-                    else:
-                        params["output_path"] = f"boxplot_{idx}.png"
-            
-            elif tool_name == "plot_heatmap":
-                # Need data (DataFrame) and output_path
-                # data comes from df parameter, need to rename it
-                if "df" in params:
-                    params["data"] = params.pop("df")
-                if "output_path" not in params:
-                    if artifact_manager:
-                        params["output_path"] = str(artifact_manager.get_path("chart", f"heatmap_{idx}.png"))
-                    else:
-                        params["output_path"] = f"heatmap_{idx}.png"
-                # Rename annotation to annot
-                if "annotation" in params:
-                    params["annot"] = params.pop("annotation")
-                # Add select_numeric flag to filter only numeric columns
-                if "select_numeric" not in params:
-                    params["select_numeric"] = True
-            
-            elif tool_name == "compute_distributions":
-                # Need column
-                if "column" not in params and numeric_cols:
-                    params["column"] = numeric_cols[0]
-            
-            elif tool_name == "detect_anomalies":
-                # Need column
-                if "column" not in params and numeric_cols:
-                    params["column"] = numeric_cols[0]
-            
-            elif tool_name == "aggregate":
-                # aggregate expects: group_by (list), agg_map (dict)
-                if "group_by" not in params or params.get("group_by") == ["auto"]:
-                    # Try to infer grouping columns from categorical columns
-                    categorical_cols = [c.name for c in schema.columns if 'categorical' in c.roles]
-                    if categorical_cols:
-                        params["group_by"] = categorical_cols[:2]  # Use first 2 categorical columns
-                    else:
-                        params["group_by"] = []  # No grouping
-                
-                # Need agg_map dict: {column: agg_function}
-                if "agg_map" not in params or params.get("agg_map") == "auto":
-                    if numeric_cols:
-                        # Default: sum all numeric columns
-                        params["agg_map"] = {col: "sum" for col in numeric_cols}
-                    else:
-                        params["agg_map"] = {}
-
-            
-            elif tool_name == "segment_metric":
-                # segment_metric expects: segment_by (str), metric (str), agg (str)
-                if "segment_by" not in params or params.get("segment_by") == "auto":
-                    categorical_cols = [c.name for c in schema.columns if 'categorical' in c.roles]
-                    if categorical_cols:
-                        params["segment_by"] = categorical_cols[0]
-                
-                if "metric" not in params or params.get("metric") == "auto":
-                    if numeric_cols:
-                        params["metric"] = numeric_cols[0]
-                
-                if "agg" not in params:
-                    params["agg"] = "mean"  # Default aggregation
+            # Resolve parameters using the resolver
+            resolved_params = resolver.resolve(tool_name, params, sequence=idx)
             
             tool_call = {
                 "sequence": idx,
                 "step_id": step.get("step_id"),
                 "tool": tool_name,
-                "args": params,
+                "args": resolved_params,
                 "description": step.get("description", ""),
             }
+            
+            # Validate tool call before adding
+            validation_result = validate_tool_call(tool_call)
+            if not validation_result.is_valid:
+                logger.warning(
+                    f"Tool call validation failed for {tool_name}: {validation_result.errors}"
+                )
+                # Continue anyway but log warnings
+            
             tool_calls.append(tool_call)
         
         logger.info(f"Generated {len(tool_calls)} tool calls from plan")
