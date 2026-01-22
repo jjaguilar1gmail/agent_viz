@@ -187,12 +187,16 @@ class LLMClient:
         return f"""Classify the user's analytical intent based on their question and the dataset structure.
 
 AVAILABLE INTENTS (with templates):
-1. general_eda - Broad exploration (e.g., "summarize this data", "what's in here?") [ALWAYS AVAILABLE]
+1. general_eda - Broad exploration (e.g., "summarize this data", "what's in here?")
 2. time_series_investigation - Temporal patterns (e.g., "trends over time", "seasonal patterns")
 3. anomaly_detection - Outliers and unusual values (e.g., "find anomalies", "detect outliers")
+4. comparative_analysis - Compare groups/categories (e.g., "compare by region", "revenue by product")
 
-IMPORTANT: If the question doesn't clearly match time_series or anomaly_detection, choose general_eda.
-For comparison questions like "compare regions" or "segment analysis", use general_eda.
+INTENT SELECTION RULES:
+- "compare", "by", "across", "versus", "difference between" → comparative_analysis
+- "time", "trend", "over time", "temporal" → time_series_investigation
+- "anomaly", "outlier", "unusual", "abnormal" → anomaly_detection
+- General questions → general_eda
 
 USER QUESTION: "{question}"
 
@@ -203,6 +207,7 @@ DATASET SCHEMA:
 - Numeric columns: {len(numeric_cols)}
 
 EXAMPLES:
+Question: "Compare revenue by region and product" → {{"primary": "comparative_analysis", "confidence": 0.95, "reasoning": "Keywords 'compare' and 'by' indicate comparison across categories"}}
 Question: "Analyze revenue trends over time" → {{"primary": "time_series_investigation", "confidence": 0.95, "reasoning": "Keywords 'trends' and 'over time' indicate temporal analysis"}}
 Question: "Find unusual sales patterns" → {{"primary": "anomaly_detection", "confidence": 0.90, "reasoning": "User explicitly asks for 'unusual' patterns"}}
 
@@ -280,24 +285,33 @@ DATASET CONTEXT:
 - Temporal columns: {', '.join(temporal_cols) if temporal_cols else 'none'}
 - Shape: {schema.data_shape}
 
+AVAILABLE TOOLS (use EXACT names):
+- aggregate: Group data and compute aggregations (use for "compare by", "group by")
+- segment_metric: Segment metric by category
+- detect_anomalies: Detect outliers or unusual values
+- compute_summary_stats: Basic statistics (mean, std, etc.)
+- compute_correlations: Correlation matrix
+- compute_distributions: Distribution analysis
+- plot_line, plot_bar, plot_scatter, plot_histogram, plot_heatmap, plot_boxplot
+
 YOUR TASK:
 1. Check if the user question mentions specific requirements not in the template
-2. Look for keywords like "anomaly", "outlier", "unusual", "compare", "segment", "correlate"
+2. Look for keywords like "anomaly", "outlier", "unusual", "compare", "segment", "group by"
 3. Suggest adding, removing, or modifying steps to better match the question
 
 EXAMPLES:
-- If user asks for "outliers" but template lacks anomaly detection → add detect_anomalies step
-- If user asks for "trends" and template has histogram → change to line plot
-- If template fits perfectly → return empty changes array
+- User asks "find outliers" → add step with tool="detect_anomalies"
+- User asks "compare revenue by region" → add step with tool="aggregate", params={{"group_by": ["region"], "agg_func": "sum"}}
+- User asks "compare by region and product" → add step with tool="aggregate", params={{"group_by": ["region", "product_category"], "agg_func": "sum"}}
+- Template fits perfectly → return empty changes array
 
 RESPONSE FORMAT (JSON only, no preamble):
-{{"changes": [{{"action": "add|remove|modify", "step_id": "<id>", "tool": "<tool_name>", "description": "<reason>", "params": {{"df": "$dataframe"}}}}], "rationale": "<overall explanation of changes or 'Template fits user question well'>"}}
+{{"changes": [{{"action": "add|remove|modify", "step_id": "<id>", "tool": "<exact_tool_name>", "description": "<reason>", "params": {{"df": "$dataframe"}}}}], "rationale": "<overall explanation>"}}
 
-IMPORTANT: When action is "add", you MUST provide:
-- step_id: unique identifier (e.g., "detect_outliers")
-- tool: exact tool name (e.g., "detect_anomalies", "plot_line", "compute_summary_stats")
-- description: what this step does
-- params: at minimum {{"df": "$dataframe"}}
+IMPORTANT: 
+- tool MUST be an exact tool name from the list above (e.g., "aggregate", NOT "aggregate by region")
+- For grouping/comparing, use tool="aggregate" with group_by parameter
+- step_id must be unique (e.g., "compare_by_region_product")
 
 Your JSON response:"""
 
@@ -305,6 +319,19 @@ Your JSON response:"""
         """Apply adaptation changes to template."""
         import copy
         adapted = copy.deepcopy(template)
+        
+        # Valid tool names for validation
+        valid_tools = [
+            "load_dataset", "sample_rows", "save_dataframe",
+            "infer_schema",
+            "handle_missing", "parse_datetime", "cast_types", "normalize_column_names",
+            "compute_summary_stats", "compute_correlations", "compute_value_counts", 
+            "compute_percentiles", "aggregate",
+            "detect_anomalies", "segment_metric", "compute_distributions", 
+            "compare_groups", "compute_time_series_features",
+            "plot_line", "plot_bar", "plot_scatter", "plot_histogram", 
+            "plot_heatmap", "plot_boxplot"
+        ]
         
         for change in changes:
             action = change.get("action")
@@ -317,10 +344,31 @@ Your JSON response:"""
                     if step.get("step_id") == step_id:
                         step["params"].update(change.get("params", {}))
             elif action == "add":
+                # Get tool name and validate/correct it
+                tool_name = change.get("tool", "unknown")
+                
+                # Fix common LLM mistakes in tool names
+                if tool_name not in valid_tools:
+                    # Try to extract valid tool name from description
+                    if "group" in tool_name.lower() or "compare" in tool_name.lower():
+                        tool_name = "aggregate"
+                        # Add group_by parameter if not present
+                        if "params" not in change or "group_by" not in change.get("params", {}):
+                            if "params" not in change:
+                                change["params"] = {"df": "$dataframe"}
+                            change["params"]["group_by"] = ["auto"]  # Will be filled by generate_tool_calls
+                    elif "summary" in tool_name.lower() or "stats" in tool_name.lower():
+                        tool_name = "compute_summary_stats"
+                    elif "anomal" in tool_name.lower() or "outlier" in tool_name.lower():
+                        tool_name = "detect_anomalies"
+                    else:
+                        logger.warning(f"Invalid tool name '{tool_name}', using 'unknown'")
+                        tool_name = "unknown"
+                
                 # Add new step from change specification
                 new_step = {
                     "step_id": step_id,
-                    "tool": change.get("tool", "unknown"),
+                    "tool": tool_name,
                     "description": change.get("description", change.get("reason", "")),
                     "params": change.get("params", {"df": "$dataframe"})
                 }
@@ -396,6 +444,17 @@ Your JSON response:"""
             
             elif tool_name == "plot_bar":
                 # Need x, y, and output_path
+                # For comparative analysis, x is categorical, y is numeric
+                categorical_cols = [c.name for c in schema.columns if 'categorical' in c.roles]
+                
+                if "x" not in params or params.get("x") == "auto":
+                    if categorical_cols:
+                        params["x"] = categorical_cols[0]
+                
+                if "y" not in params or params.get("y") == "auto":
+                    if numeric_cols:
+                        params["y"] = numeric_cols[0]
+                
                 if "output_path" not in params:
                     if artifact_manager:
                         params["output_path"] = str(artifact_manager.get_path("chart", f"bar_plot_{idx}.png"))
@@ -452,6 +511,39 @@ Your JSON response:"""
                 # Need column
                 if "column" not in params and numeric_cols:
                     params["column"] = numeric_cols[0]
+            
+            elif tool_name == "aggregate":
+                # aggregate expects: group_by (list), agg_map (dict)
+                if "group_by" not in params or params.get("group_by") == ["auto"]:
+                    # Try to infer grouping columns from categorical columns
+                    categorical_cols = [c.name for c in schema.columns if 'categorical' in c.roles]
+                    if categorical_cols:
+                        params["group_by"] = categorical_cols[:2]  # Use first 2 categorical columns
+                    else:
+                        params["group_by"] = []  # No grouping
+                
+                # Need agg_map dict: {column: agg_function}
+                if "agg_map" not in params or params.get("agg_map") == "auto":
+                    if numeric_cols:
+                        # Default: sum all numeric columns
+                        params["agg_map"] = {col: "sum" for col in numeric_cols}
+                    else:
+                        params["agg_map"] = {}
+
+            
+            elif tool_name == "segment_metric":
+                # segment_metric expects: segment_by (str), metric (str), agg (str)
+                if "segment_by" not in params or params.get("segment_by") == "auto":
+                    categorical_cols = [c.name for c in schema.columns if 'categorical' in c.roles]
+                    if categorical_cols:
+                        params["segment_by"] = categorical_cols[0]
+                
+                if "metric" not in params or params.get("metric") == "auto":
+                    if numeric_cols:
+                        params["metric"] = numeric_cols[0]
+                
+                if "agg" not in params:
+                    params["agg"] = "mean"  # Default aggregation
             
             tool_call = {
                 "sequence": idx,

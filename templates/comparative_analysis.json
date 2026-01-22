@@ -1,0 +1,66 @@
+{
+  "template_id": "comparative_analysis_01",
+  "version": "1.0.0",
+  "name": "Comparative Analysis",
+  "description": "Compare metrics across categories or groups",
+  "intents": ["comparative_analysis"],
+  "data_shape": ["tabular"],
+  "requires": {
+    "min_rows": 2,
+    "min_columns": 2
+  },
+  "prefers": {
+    "has_numeric": true,
+    "has_categorical": true
+  },
+  "supports": ["temporal"],
+  "steps": [
+    {
+      "step_id": "summary_stats",
+      "tool": "compute_summary_stats",
+      "description": "Compute summary statistics for numeric columns",
+      "params": {
+        "df": "$dataframe"
+      }
+    },
+    {
+      "step_id": "aggregate_by_groups",
+      "tool": "aggregate",
+      "description": "Aggregate metrics by category groups",
+      "params": {
+        "df": "$dataframe",
+        "group_by": ["auto"],
+        "agg_map": "auto"
+      }
+    },
+    {
+      "step_id": "plot_comparison_bar",
+      "tool": "plot_bar",
+      "description": "Visualize comparisons with bar chart",
+      "params": {
+        "df": "$dataframe",
+        "x": "auto",
+        "y": "auto"
+      }
+    },
+    {
+      "step_id": "segment_analysis",
+      "tool": "segment_metric",
+      "description": "Segment metric by category for detailed comparison",
+      "params": {
+        "df": "$dataframe",
+        "segment_by": "auto",
+        "metric": "auto",
+        "agg": "mean"
+      }
+    },
+    {
+      "step_id": "compute_distributions",
+      "tool": "compute_distributions",
+      "description": "Analyze distributions across groups",
+      "params": {
+        "df": "$dataframe"
+      }
+    }
+  ]
+}
