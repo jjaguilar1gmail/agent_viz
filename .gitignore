@@ -68,10 +68,11 @@ artifacts/
 !examples/**/*.csv
 !examples/**/*.png
 
-# Model weights
+# Model weights (GGUF files, but not source code)
 *.gguf
 *.bin
-models/
+/models/
+!src/**/models/
 
 # Temporary files
 *.tmp
