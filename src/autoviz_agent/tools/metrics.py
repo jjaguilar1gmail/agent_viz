@@ -10,7 +10,13 @@ from autoviz_agent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-@tool(description="Aggregate data by groups")
+@tool(
+    description="Aggregate data by groups",
+    param_overrides={
+        "group_by": {"required": False, "default": "auto"},
+        "agg_map": {"required": False, "default": "auto"},
+    },
+)
 def aggregate(
     df: pd.DataFrame, group_by: List[str], agg_map: Dict[str, str]
 ) -> pd.DataFrame:
@@ -30,7 +36,10 @@ def aggregate(
     return result
 
 
-@tool(description="Compute summary statistics")
+@tool(
+    description="Compute summary statistics",
+    param_overrides={"columns": {"role": "numeric"}},
+)
 def compute_summary_stats(df: pd.DataFrame, columns: Optional[List[str]] = None) -> Dict[str, Any]:
     """
     Compute summary statistics.
@@ -81,7 +90,10 @@ def compute_correlations(df: pd.DataFrame, method: str = "pearson") -> pd.DataFr
     return corr
 
 
-@tool(description="Count unique values")
+@tool(
+    description="Count unique values",
+    param_overrides={"column": {"role": "categorical"}},
+)
 def compute_value_counts(
     df: pd.DataFrame, column: str, top_n: Optional[int] = 10, normalize: bool = False
 ) -> pd.Series:
@@ -106,7 +118,10 @@ def compute_value_counts(
     return counts
 
 
-@tool(description="Compute percentiles")
+@tool(
+    description="Compute percentiles",
+    param_overrides={"column": {"role": "numeric"}},
+)
 def compute_percentiles(
     df: pd.DataFrame, column: str, percentiles: List[float]
 ) -> Dict[float, float]:

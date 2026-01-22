@@ -18,7 +18,13 @@ logger = get_logger(__name__)
 configure_matplotlib_backend()
 
 
-@tool(description="Create line plot")
+@tool(
+    description="Create line plot",
+    param_overrides={
+        "x": {"role": "temporal"},
+        "y": {"role": "numeric"},
+    },
+)
 def plot_line(
     df: pd.DataFrame,
     x: str,
@@ -60,7 +66,14 @@ def plot_line(
     return output_path
 
 
-@tool(description="Create bar plot")
+@tool(
+    description="Create bar plot",
+    param_overrides={
+        "x": {"role": "categorical"},
+        "y": {"role": "numeric"},
+        "hue": {"role": "categorical"},
+    },
+)
 def plot_bar(
     df: pd.DataFrame,
     x: str,
@@ -115,7 +128,14 @@ def plot_bar(
     return output_path
 
 
-@tool(description="Create scatter plot")
+@tool(
+    description="Create scatter plot",
+    param_overrides={
+        "x": {"role": "numeric"},
+        "y": {"role": "numeric"},
+        "hue": {"role": "categorical"},
+    },
+)
 def plot_scatter(
     df: pd.DataFrame,
     x: str,
@@ -162,7 +182,10 @@ def plot_scatter(
     return output_path
 
 
-@tool(description="Create histogram")
+@tool(
+    description="Create histogram",
+    param_overrides={"column": {"role": "numeric"}},
+)
 def plot_histogram(
     df: pd.DataFrame,
     column: str,
@@ -245,7 +268,13 @@ def plot_heatmap(
     return output_path
 
 
-@tool(description="Create box plot")
+@tool(
+    description="Create box plot",
+    param_overrides={
+        "column": {"role": "numeric"},
+        "by": {"role": "categorical"},
+    },
+)
 def plot_boxplot(
     df: pd.DataFrame,
     column: str,

@@ -10,7 +10,10 @@ from autoviz_agent.utils.logging import get_logger
 logger = get_logger(__name__)
 
 
-@tool(description="Handle missing values")
+@tool(
+    description="Handle missing values",
+    param_overrides={"columns": {"role": "any"}},
+)
 def handle_missing(
     df: pd.DataFrame, strategy: str = "drop", columns: Optional[List[str]] = None
 ) -> pd.DataFrame:
@@ -54,7 +57,10 @@ def handle_missing(
     return result
 
 
-@tool(description="Parse datetime columns")
+@tool(
+    description="Parse datetime columns",
+    param_overrides={"columns": {"role": "temporal"}},
+)
 def parse_datetime(
     df: pd.DataFrame, columns: List[str], format: Optional[str] = None
 ) -> pd.DataFrame:

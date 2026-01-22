@@ -8,7 +8,7 @@ import pandas as pd
 
 from autoviz_agent.io.artifacts import ArtifactManager
 from autoviz_agent.registry.schemas import ToolCallResult
-from autoviz_agent.registry.tools import TOOL_REGISTRY
+from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
 from autoviz_agent.reporting.execution_log import ExecutionLog
 from autoviz_agent.tools import analysis, data_io, metrics, prep, schema, visualization
 from autoviz_agent.utils.logging import get_logger
@@ -29,6 +29,7 @@ class ToolExecutor:
         self.artifact_manager = artifact_manager
         self.execution_log = ExecutionLog()
         # Tools are auto-registered via @tool decorator when modules are imported
+        ensure_default_tools_registered()
         logger.info(f"Initialized executor with {len(TOOL_REGISTRY.list_tools())} registered tools")
 
     def execute(self, tool_call: Dict[str, Any], context: Dict[str, Any]) -> ToolCallResult:

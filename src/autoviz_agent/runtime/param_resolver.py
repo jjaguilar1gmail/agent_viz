@@ -7,7 +7,7 @@ import pandas as pd
 
 from autoviz_agent.io.artifacts import ArtifactManager
 from autoviz_agent.models.state import SchemaProfile
-from autoviz_agent.registry.tools import TOOL_REGISTRY
+from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
 from autoviz_agent.runtime.column_selectors import ColumnSelector
 from autoviz_agent.utils.logging import get_logger
 
@@ -34,6 +34,8 @@ class ParamResolver:
         self.schema = schema
         self.artifact_manager = artifact_manager
         self.user_question = user_question or ""
+
+        ensure_default_tools_registered()
         
         # Use ColumnSelector for all column selections
         self.column_selector = ColumnSelector(schema, user_question)
@@ -89,7 +91,10 @@ class ParamResolver:
                 # Use role-based column selection if role is specified
                 if param.role:
                     if param.role in ["temporal", "numeric", "categorical"]:
-                        selected = self.column_selector.select(param.role, count=1)
+                        exclude = []
+                        if tool_name == "plot_scatter" and param_name == "y" and "x" in resolved:
+                            exclude = [resolved["x"]]
+                        selected = self.column_selector.select(param.role, count=1, exclude=exclude)
                         if selected:
                             resolved[param_name] = selected[0]
                     elif param.role == "any":
@@ -122,7 +127,7 @@ class ParamResolver:
                 logger.info(f"Selected agg_map: {resolved['agg_map']}")
         
         # Apply known parameter aliases (normalize)
-        resolved = self._normalize_aliases(resolved)
+        resolved = self._normalize_aliases(resolved, tool_name)
         
         # Remove known invalid parameters
         resolved = self._remove_invalid_params(resolved, tool_name)
@@ -158,10 +163,11 @@ class ParamResolver:
         
         return None
     
-    def _normalize_aliases(self, params: Dict[str, Any]) -> Dict[str, Any]:
+    def _normalize_aliases(self, params: Dict[str, Any], tool_name: str) -> Dict[str, Any]:
         """Normalize known parameter aliases."""
-        # For plot_heatmap, df parameter should actually be data in seaborn
-        # But keep df for now - it will be handled by executor
+        # For plot_heatmap, df parameter should be data for seaborn
+        if tool_name == "plot_heatmap" and "df" in params and "data" not in params:
+            params["data"] = params.pop("df")
         
         # annotation -> annot for heatmap
         if "annotation" in params and "annot" not in params:
