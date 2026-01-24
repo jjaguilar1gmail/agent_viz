@@ -5,6 +5,17 @@ default_model: "phi-3.5-mini"
 
 # Model definitions
 models:
+  phi-4-mini:
+    name: "Phi-4-mini-instruct"
+    backend: "llama.cpp"
+    path: "models/Phi-4-mini-instruct-Q4_K_M.gguf"
+    context_length: 16384
+    quantization: "Q4_K_M"
+    n_gpu_layers: -1  # Use all available GPU layers
+    temperature: 0.1  # Low for deterministic behavior
+    top_p: 0.9
+    max_tokens: 4096
+    
   phi-3.5-mini:
     name: "Phi-3.5-mini-instruct"
     backend: "llama.cpp"
