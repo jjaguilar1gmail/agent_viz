@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional
 
 from autoviz_agent.models.state import Intent, IntentLabel, SchemaProfile
 from autoviz_agent.utils.logging import get_logger
+from autoviz_agent.llm.prompts import PromptBuilder
 
 logger = get_logger(__name__)
 
@@ -23,6 +24,10 @@ class LLMClient:
         self.model_config = model_config
         self.model_path = Path(model_config.get("path", ""))
         self._llm = None
+        
+        # Initialize prompt builder with optional template directory
+        templates_dir = Path(__file__).parent.parent.parent.parent / "templates" / "prompts"
+        self.prompt_builder = PromptBuilder(template_dir=templates_dir if templates_dir.exists() else None)
         
         # Check if model file exists
         if not self.model_path.exists():
@@ -145,8 +150,8 @@ class LLMClient:
         Returns:
             Intent classification
         """
-        # Build prompt for intent classification
-        prompt = self._build_intent_prompt(user_question, schema)
+        # Build prompt for intent classification using PromptBuilder
+        prompt = self.prompt_builder.build_intent_prompt(user_question, schema)
         
         logger.info("Classifying user intent")
         response = self._generate(prompt, max_tokens=200, stop=["\n\n"])
@@ -175,47 +180,6 @@ class LLMClient:
                 top_intents=[{"general_eda": 0.5}],
             )
 
-    def _build_intent_prompt(self, question: str, schema: SchemaProfile) -> str:
-        """Build prompt for intent classification."""
-        column_info = ', '.join(f"{c.name}({c.dtype})" for c in schema.columns[:5])
-        if len(schema.columns) > 5:
-            column_info += '...'
-        
-        temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
-        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64']]
-        
-        return f"""Classify the user's analytical intent based on their question and the dataset structure.
-
-AVAILABLE INTENTS (with templates):
-1. general_eda - Broad exploration (e.g., "summarize this data", "what's in here?")
-2. time_series_investigation - Temporal patterns (e.g., "trends over time", "seasonal patterns")
-3. anomaly_detection - Outliers and unusual values (e.g., "find anomalies", "detect outliers")
-4. comparative_analysis - Compare groups/categories (e.g., "compare by region", "revenue by product")
-
-INTENT SELECTION RULES:
-- "compare", "by", "across", "versus", "difference between" → comparative_analysis
-- "time", "trend", "over time", "temporal" → time_series_investigation
-- "anomaly", "outlier", "unusual", "abnormal" → anomaly_detection
-- General questions → general_eda
-
-USER QUESTION: "{question}"
-
-DATASET SCHEMA:
-- Rows: {schema.row_count}, Columns: {len(schema.columns)}
-- Column names: {column_info}
-- Temporal columns: {', '.join(temporal_cols) if temporal_cols else 'none'}
-- Numeric columns: {len(numeric_cols)}
-
-EXAMPLES:
-Question: "Compare revenue by region and product" → {{"primary": "comparative_analysis", "confidence": 0.95, "reasoning": "Keywords 'compare' and 'by' indicate comparison across categories"}}
-Question: "Analyze revenue trends over time" → {{"primary": "time_series_investigation", "confidence": 0.95, "reasoning": "Keywords 'trends' and 'over time' indicate temporal analysis"}}
-Question: "Find unusual sales patterns" → {{"primary": "anomaly_detection", "confidence": 0.90, "reasoning": "User explicitly asks for 'unusual' patterns"}}
-
-Your response (JSON only, no other text):
-{{"primary": "<intent>", "confidence": 0.0-1.0, "reasoning": "<why you chose this intent>"}}
-
-Response:"""
-
     def adapt_plan(
         self,
         template_plan: Dict[str, Any],
@@ -235,7 +199,8 @@ Response:"""
         Returns:
             Adapted plan with modifications
         """
-        prompt = self._build_adaptation_prompt(template_plan, schema, intent, user_question)
+        # Build prompt for plan adaptation using PromptBuilder
+        prompt = self.prompt_builder.build_adaptation_prompt(template_plan, schema, intent, user_question)
         
         logger.info("Adapting plan template")
         response = self._generate(prompt, max_tokens=400, stop=["Here are", "Here is", "\n\nHere", "Additional"])
@@ -261,59 +226,6 @@ Response:"""
         except Exception as e:
             logger.warning(f"Failed to parse adaptation response: {e}. Using template as-is.")
             return {**template_plan, "adaptation_rationale": "No adaptation applied", "changes_applied": 0}
-
-    def _build_adaptation_prompt(
-        self, template: Dict[str, Any], schema: SchemaProfile, intent: Intent, question: str
-    ) -> str:
-        """Build prompt for plan adaptation."""
-        template_steps = template.get('steps', [])
-        step_summary = "\n".join([f"  - {s.get('step_id')}: {s.get('tool')} - {s.get('description', '')}" for s in template_steps[:5]])
-        
-        temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
-        
-        return f"""Review this analysis plan template and suggest modifications based on the user's specific question.
-
-USER QUESTION: "{question}"
-INTENT: {intent.label}
-
-TEMPLATE: {template.get('template_id')} ({len(template_steps)} steps)
-Current steps:
-{step_summary}
-
-DATASET CONTEXT:
-- Rows: {schema.row_count}, Columns: {len(schema.columns)}
-- Temporal columns: {', '.join(temporal_cols) if temporal_cols else 'none'}
-- Shape: {schema.data_shape}
-
-AVAILABLE TOOLS (use EXACT names):
-- aggregate: Group data and compute aggregations (use for "compare by", "group by")
-- segment_metric: Segment metric by category
-- detect_anomalies: Detect outliers or unusual values
-- compute_summary_stats: Basic statistics (mean, std, etc.)
-- compute_correlations: Correlation matrix
-- compute_distributions: Distribution analysis
-- plot_line, plot_bar, plot_scatter, plot_histogram, plot_heatmap, plot_boxplot
-
-YOUR TASK:
-1. Check if the user question mentions specific requirements not in the template
-2. Look for keywords like "anomaly", "outlier", "unusual", "compare", "segment", "group by"
-3. Suggest adding, removing, or modifying steps to better match the question
-
-EXAMPLES:
-- User asks "find outliers" → add step with tool="detect_anomalies"
-- User asks "compare revenue by region" → add step with tool="aggregate", params={{"group_by": ["region"], "agg_func": "sum"}}
-- User asks "compare by region and product" → add step with tool="aggregate", params={{"group_by": ["region", "product_category"], "agg_func": "sum"}}
-- Template fits perfectly → return empty changes array
-
-RESPONSE FORMAT (JSON only, no preamble):
-{{"changes": [{{"action": "add|remove|modify", "step_id": "<id>", "tool": "<exact_tool_name>", "description": "<reason>", "params": {{"df": "$dataframe"}}}}], "rationale": "<overall explanation>"}}
-
-IMPORTANT: 
-- tool MUST be an exact tool name from the list above (e.g., "aggregate", NOT "aggregate by region")
-- For grouping/comparing, use tool="aggregate" with group_by parameter
-- step_id must be unique (e.g., "compare_by_region_product")
-
-Your JSON response:"""
 
     def _apply_adaptations(self, template: Dict[str, Any], changes: List[Dict[str, Any]]) -> Dict[str, Any]:
         """Apply adaptation changes to template."""

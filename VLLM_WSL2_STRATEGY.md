@@ -28,7 +28,7 @@ LLM reliability, while keeping this repo on Windows for development.
 
 ### 1) Install NVIDIA Windows driver (WSL2-capable)
 1. Download the latest NVIDIA driver that includes WSL2 support.
-2. Install on Windows and reboot.
+2. Install on Windows and reboot. - this is done, but you can still verify below.
 
 Verify from Windows PowerShell:
 ```powershell
@@ -180,4 +180,4 @@ If you meant the model's Hugging Face `config.json`:
 ## Notes
 - WSL sees your Windows C: drive at `/mnt/c`.
 - For best performance, keep models inside the WSL filesystem, not `/mnt/c`.
-- If you prefer Docker instead of WSL2, you will also need the NVIDIA Container Toolkit.
+- If you prefer Docker instead of WSL2, you will also need the NVIDIA Container Toolkit. - but as stated we are not going the Docker route, we are going WSL2.
