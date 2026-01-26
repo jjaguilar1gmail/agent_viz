@@ -96,11 +96,17 @@ class ParamResolver:
                             exclude = [resolved["x"]]
                         selected = self.column_selector.select(param.role, count=1, exclude=exclude)
                         if selected:
-                            resolved[param_name] = selected[0]
+                            if param.type in ("array", "list"):
+                                resolved[param_name] = selected
+                            else:
+                                resolved[param_name] = selected[0]
                     elif param.role == "any":
                         selected = self.column_selector.select("any", count=1)
                         if selected:
-                            resolved[param_name] = selected[0]
+                            if param.type in ("array", "list"):
+                                resolved[param_name] = selected
+                            else:
+                                resolved[param_name] = selected[0]
                 # Use default value if provided in schema
                 elif param.default is not None:
                     resolved[param_name] = param.default

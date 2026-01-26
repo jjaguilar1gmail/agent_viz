@@ -1,14 +1,135 @@
 """Tool call schema validation and unknown tool rejection."""
 
+import re
+from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
 
 from pydantic import ValidationError
 
+from autoviz_agent.models.state import SchemaProfile
 from autoviz_agent.registry.schemas import ToolCallRequest
-from autoviz_agent.registry.tools import TOOL_REGISTRY, ToolParameter
+from autoviz_agent.registry.tools import TOOL_REGISTRY, ToolParameter, ToolSchema
 from autoviz_agent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+_COLUMN_SIMILARITY_THRESHOLD = 0.7
+_COLUMN_SIMILARITY_MARGIN = 0.05
+
+
+def _normalize_column_name(name: str) -> str:
+    normalized = name.strip().lower()
+    normalized = normalized.replace("-", "_").replace(" ", "_")
+    normalized = re.sub(r"[^a-z0-9_]", "", normalized)
+    normalized = re.sub(r"_+", "_", normalized)
+    return normalized
+
+
+def _columns_for_role(schema_profile: SchemaProfile, role: str) -> List[str]:
+    columns = [c.name for c in schema_profile.columns]
+    if role == "any":
+        return columns
+
+    role_matches = [c.name for c in schema_profile.columns if role in c.roles]
+    if role_matches:
+        return role_matches
+
+    numeric_dtypes = {"int64", "int32", "int", "float64", "float32", "float", "number"}
+    categorical_dtypes = {"object", "string", "category", "bool", "boolean"}
+
+    if role == "numeric":
+        return [c.name for c in schema_profile.columns if c.dtype in numeric_dtypes] or columns
+    if role == "categorical":
+        return [c.name for c in schema_profile.columns if c.dtype in categorical_dtypes] or columns
+    if role == "temporal":
+        return [
+            c.name
+            for c in schema_profile.columns
+            if "date" in c.dtype.lower() or "time" in c.dtype.lower()
+        ] or columns
+
+    return columns
+
+
+def _best_column_match(value: str, candidates: List[str]) -> Optional[str]:
+    if not candidates:
+        return None
+
+    normalized_candidates = {
+        _normalize_column_name(candidate): candidate for candidate in candidates
+    }
+    normalized_value = _normalize_column_name(value)
+
+    exact_match = normalized_candidates.get(normalized_value)
+    if exact_match:
+        return exact_match
+
+    best = None
+    best_score = 0.0
+    second_best = 0.0
+
+    for candidate in candidates:
+        score = SequenceMatcher(
+            None, normalized_value, _normalize_column_name(candidate)
+        ).ratio()
+        if score > best_score:
+            second_best = best_score
+            best_score = score
+            best = candidate
+        elif score > second_best:
+            second_best = score
+
+    if best_score >= _COLUMN_SIMILARITY_THRESHOLD and (best_score - second_best) >= _COLUMN_SIMILARITY_MARGIN:
+        return best
+
+    return None
+
+
+def _repair_column_params(
+    args: Dict[str, Any],
+    schema_profile: SchemaProfile,
+    tool_schema: ToolSchema,
+) -> Dict[str, Any]:
+    repaired = args.copy()
+
+    for param in tool_schema.parameters:
+        if not param.role or param.name not in repaired:
+            continue
+
+        role = param.role
+        candidates = _columns_for_role(schema_profile, role)
+        if not candidates:
+            continue
+
+        value = repaired.get(param.name)
+        if value is None or value == "auto":
+            continue
+
+        if isinstance(value, list):
+            new_values = []
+            changed = False
+            for item in value:
+                if isinstance(item, str) and item not in candidates:
+                    match = _best_column_match(item, candidates)
+                    if match:
+                        new_values.append(match)
+                        changed = True
+                        continue
+                new_values.append(item)
+            if changed:
+                logger.info(
+                    f"Repaired column list '{param.name}': {value} -> {new_values}"
+                )
+                repaired[param.name] = new_values
+        elif isinstance(value, str) and value not in candidates:
+            match = _best_column_match(value, candidates)
+            if match:
+                logger.info(
+                    f"Repaired column '{param.name}': '{value}' -> '{match}'"
+                )
+                repaired[param.name] = match
+
+    return repaired
 
 
 class ValidationResult:
@@ -176,7 +297,10 @@ def reject_invalid_tool_calls(tool_calls: List[Dict[str, Any]]) -> Tuple[List[Di
     return valid, invalid
 
 
-def repair_tool_call(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+def repair_tool_call(
+    tool_call: Dict[str, Any],
+    schema_profile: Optional[SchemaProfile] = None,
+) -> Dict[str, Any]:
     """
     Attempt to repair an invalid tool call by filling missing required parameters.
 
@@ -194,6 +318,16 @@ def repair_tool_call(tool_call: Dict[str, Any]) -> Dict[str, Any]:
     
     repaired_call = tool_call.copy()
     args = repaired_call.get("args", {}).copy()
+
+    allowed_params = {param.name for param in schema.parameters}
+    invalid_params = [name for name in args.keys() if name not in allowed_params]
+    if invalid_params:
+        for name in invalid_params:
+            args.pop(name, None)
+        logger.info(f"Removed invalid params for {tool_name}: {invalid_params}")
+
+    if schema_profile:
+        args = _repair_column_params(args, schema_profile, schema)
     
     # Fill missing required parameters with schema defaults
     for param in schema.parameters:

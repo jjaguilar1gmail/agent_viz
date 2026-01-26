@@ -273,7 +273,8 @@ def compile_tool_calls_node(state: GraphState) -> Dict[str, Any]:
             state.adapted_plan, 
             state.schema,
             state.artifact_manager,
-            state.question  # Pass user question for column extraction
+            state.question,  # Pass user question for column extraction
+            execution_log=state.execution_log,
         )
         state.tool_calls = tool_calls
         
@@ -388,6 +389,32 @@ def summarize_node(state: GraphState) -> Dict[str, Any]:
         if state.execution_results:
             report.add_charts_section(state.execution_results)
         
+        repair_entries = []
+        if state.execution_log:
+            for entry in state.execution_log.entries:
+                result = entry.result or {}
+                if result.get("repair_attempt"):
+                    details = result.get("details", {})
+                    removed = details.get("removed_params") or []
+                    added = details.get("added_params") or {}
+                    changed = details.get("changed_params") or {}
+                    summary = [f"tool={entry.tool}"]
+                    if removed:
+                        summary.append(f"removed={', '.join(removed)}")
+                    if added:
+                        summary.append(f"added={', '.join(added.keys())}")
+                    if changed:
+                        summary.append(f"changed={', '.join(changed.keys())}")
+                    repair_entries.append(", ".join(summary))
+
+        if repair_entries:
+            report.add_header("Repairs and Validation", level=2)
+            report.add_text(
+                "Some tool calls required repairs due to invalid parameters or "
+                "column name mismatches."
+            )
+            report.add_list(repair_entries)
+
         # Add provenance section
         report.add_header("Plan Provenance", level=2)
         report.add_text(f"**Template**: {state.template_plan.get('template_id')}")

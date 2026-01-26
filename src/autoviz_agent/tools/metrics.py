@@ -13,7 +13,7 @@ logger = get_logger(__name__)
 @tool(
     description="Aggregate data by groups",
     param_overrides={
-        "group_by": {"required": False, "default": "auto"},
+        "group_by": {"required": False, "default": "auto", "role": "categorical"},
         "agg_map": {"required": False, "default": "auto"},
     },
 )

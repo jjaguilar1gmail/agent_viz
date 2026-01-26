@@ -301,7 +301,12 @@ class VLLMClient:
         return adapted
 
     def generate_tool_calls(
-        self, plan: Dict[str, Any], schema: SchemaProfile, artifact_manager=None, user_question: str = ""
+        self,
+        plan: Dict[str, Any],
+        schema: SchemaProfile,
+        artifact_manager=None,
+        user_question: str = "",
+        execution_log=None,
     ) -> List[Dict[str, Any]]:
         """
         Generate tool calls from plan, using ParamResolver for parameter defaults.
@@ -339,24 +344,37 @@ class VLLMClient:
                 "description": step.get("description", ""),
             }
             
-            # Validate tool call - strict mode with repair
-            validation_result = validate_tool_call(tool_call)
-            if not validation_result.is_valid:
-                logger.warning(
-                    f"Tool call validation failed for {tool_name}: {validation_result.errors}"
+            repaired_call = repair_tool_call(tool_call, schema_profile=schema)
+            if execution_log and repaired_call.get("args") != tool_call.get("args"):
+                original_args = tool_call.get("args", {})
+                new_args = repaired_call.get("args", {})
+                removed = sorted([k for k in original_args.keys() if k not in new_args])
+                added = {k: new_args[k] for k in new_args.keys() if k not in original_args}
+                changed = {
+                    k: {"from": original_args[k], "to": new_args[k]}
+                    for k in original_args.keys()
+                    if k in new_args and original_args[k] != new_args[k]
+                }
+                details = {
+                    "removed_params": removed,
+                    "added_params": added,
+                    "changed_params": changed,
+                }
+                execution_log.add_repair_attempt(
+                    tool_name,
+                    strategy="tool_call_repair",
+                    success=True,
+                    details=details,
                 )
-                # Attempt repair
-                repaired_call = repair_tool_call(tool_call)
-                validation_result = validate_tool_call(repaired_call)
-                
-                if validation_result.is_valid:
+
+            validation_result = validate_tool_call(repaired_call)
+            if validation_result.is_valid:
+                if repaired_call.get("args") != tool_call.get("args"):
                     logger.info(f"Successfully repaired tool call: {tool_name}")
-                    tool_calls.append(repaired_call)
-                else:
-                    logger.error(f"Cannot repair tool call for {tool_name}, dropping it")
-                    dropped_calls.append({"tool": tool_name, "errors": validation_result.errors})
+                tool_calls.append(repaired_call)
             else:
-                tool_calls.append(tool_call)
+                logger.error(f"Cannot repair tool call for {tool_name}, dropping it")
+                dropped_calls.append({"tool": tool_name, "errors": validation_result.errors})
         
         if dropped_calls:
             logger.warning(f"Dropped {len(dropped_calls)} invalid tool calls: {[d['tool'] for d in dropped_calls]}")
