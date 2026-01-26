@@ -1,140 +1,136 @@
-"""LLM client for intent classification and plan adaptation using gpt4all."""
+"""vLLM client with OpenAI-compatible API and xgrammar2 support."""
 
 import json
+import requests
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from autoviz_agent.models.state import Intent, IntentLabel, SchemaProfile
 from autoviz_agent.utils.logging import get_logger
 from autoviz_agent.llm.prompts import PromptBuilder
+from autoviz_agent.llm.llm_contracts import (
+    get_intent_schema,
+    get_adaptation_schema,
+    validate_intent_output,
+    validate_adaptation_output,
+)
 
 logger = get_logger(__name__)
 
 
-class LLMClient:
-    """Client for LLM operations using gpt4all."""
+class VLLMClient:
+    """Client for vLLM server with OpenAI-compatible API."""
 
     def __init__(self, model_config: Dict[str, Any]):
         """
-        Initialize LLM client.
+        Initialize vLLM client.
 
         Args:
             model_config: Model configuration from config.yaml
+                Expected keys:
+                - backend: "vllm"
+                - url: "http://localhost:8000" (vLLM server endpoint)
+                - model_name: Model identifier (optional, for tracking)
+                - temperature: Generation temperature (default: 0.1)
+                - max_tokens: Max tokens to generate (default: 512)
+                - use_grammar: Whether to use xgrammar2 (default: True)
         """
         self.model_config = model_config
-        self.model_path = Path(model_config.get("path", ""))
-        self._llm = None
+        self.base_url = model_config.get("url", "http://localhost:8000")
+        self.model_name = model_config.get("model_name", "unknown")
+        self.temperature = model_config.get("temperature", 0.1)
+        self.max_tokens = model_config.get("max_tokens", 512)
+        self.use_grammar = model_config.get("use_grammar", True)
         
         # Initialize prompt builder with optional template directory
         templates_dir = Path(__file__).parent.parent.parent.parent / "templates" / "prompts"
         self.prompt_builder = PromptBuilder(template_dir=templates_dir if templates_dir.exists() else None)
         
-        # Check if model file exists
-        if not self.model_path.exists():
-            logger.warning(
-                f"Model file not found: {self.model_path}. "
-                f"Download from HuggingFace and place in models/ directory. "
-                f"Falling back to keyword-based classification."
-            )
-            self._use_fallback = True
-        else:
-            self._use_fallback = False
-            self._load_model()
+        # Verify server is accessible
+        self._verify_connection()
 
-    def _load_model(self) -> None:
-        """Load the GGUF model using gpt4all."""
+    def _verify_connection(self) -> None:
+        """Verify vLLM server is accessible."""
         try:
-            from gpt4all import GPT4All
-            
-            logger.info(f"Loading model: {self.model_config['name']}")
-            # gpt4all expects just the filename, not the full path
-            self._llm = GPT4All(
-                model_name=self.model_path.name,  # Just the filename
-                model_path=str(self.model_path.parent),  # Just the directory
-                allow_download=False,
-            )
-            logger.info("Model loaded successfully with gpt4all")
-        except ImportError:
-            logger.warning("gpt4all not installed. Run: pip install gpt4all")
-            self._use_fallback = True
-        except Exception as e:
-            logger.error(f"Failed to load model: {e}")
-            self._use_fallback = True
+            response = requests.get(f"{self.base_url}/v1/models", timeout=5)
+            response.raise_for_status()
+            models = response.json()
+            logger.info(f"Connected to vLLM server at {self.base_url}")
+            logger.debug(f"Available models: {models}")
+        except requests.exceptions.RequestException as e:
+            logger.error(f"Failed to connect to vLLM server at {self.base_url}: {e}")
+            logger.warning("vLLM client will fail on inference. Make sure vLLM server is running.")
 
-    def _generate(self, prompt: str, max_tokens: int = 512, stop: Optional[List[str]] = None) -> str:
+    def _generate(
+        self, 
+        prompt: str, 
+        max_tokens: int = 512,
+        json_schema: Optional[Dict[str, Any]] = None
+    ) -> str:
         """
-        Generate text from prompt.
+        Generate text from prompt using vLLM server.
 
         Args:
             prompt: Input prompt
             max_tokens: Maximum tokens to generate
-            stop: Stop sequences
+            json_schema: Optional JSON schema for grammar-constrained generation
 
         Returns:
             Generated text
-        """
-        if self._use_fallback or self._llm is None:
-            return self._fallback_generate(prompt)
-        
-        try:
-            response = self._llm.generate(
-                prompt,
-                max_tokens=max_tokens,
-                temp=self.model_config.get("temperature", 0.1),
-                top_p=self.model_config.get("top_p", 0.9),
-            )
-            
-            # Extract first complete JSON object from LLM response
-            response = response.strip()
-            
-            # Strip everything before the first '{'
-            json_start = response.find('{')
-            if json_start == -1:
-                return response  # No JSON found, return as-is
-            
-            response = response[json_start:]
-            
-            # Find the end of the first complete JSON object
-            brace_count = 0
-            for i, char in enumerate(response):
-                if char == '{':
-                    brace_count += 1
-                elif char == '}':
-                    brace_count -= 1
-                    if brace_count == 0:
-                        return response[:i+1]
-            
-            return response
-        except Exception as e:
-            logger.error(f"Generation failed: {e}")
-            return self._fallback_generate(prompt)
 
-    def _fallback_generate(self, prompt: str) -> str:
-        """Keyword-based fallback when LLM unavailable."""
-        prompt_lower = prompt.lower()
+        Raises:
+            requests.exceptions.RequestException: If request fails
+        """
+        # Build request payload
+        payload = {
+            "model": self.model_name,
+            "messages": [
+                {"role": "user", "content": prompt}
+            ],
+            "temperature": self.temperature,
+            "max_tokens": max_tokens,
+        }
         
-        # Intent classification fallback - check user question specifically
-        if "classify" in prompt_lower or "intent" in prompt_lower:
-            # Extract just the user question from the prompt
-            if "user question:" in prompt_lower:
-                question_part = prompt_lower.split("user question:")[1].split("\n")[0]
-            else:
-                question_part = prompt_lower
-                
-            if any(word in question_part for word in ["time", "trend", "temporal", "series", "over time"]):
-                return '{"primary": "time_series_investigation", "secondary": ["general_eda"], "confidence": 0.7, "reasoning": "Time-based keywords detected"}'
-            elif any(word in question_part for word in ["anomaly", "outlier", "unusual"]):
-                return '{"primary": "anomaly_detection", "secondary": ["general_eda"], "confidence": 0.7, "reasoning": "Anomaly keywords detected"}'
-            elif any(word in question_part for word in ["segment", "group", "compare", "difference"]):
-                return '{"primary": "comparative_analysis", "secondary": ["segmentation_drivers"], "confidence": 0.7, "reasoning": "Comparison keywords detected"}'
-            else:
-                return '{"primary": "general_eda", "secondary": [], "confidence": 0.6, "reasoning": "General exploration"}'
+        # Add grammar constraint if schema provided and grammar is enabled
+        if json_schema and self.use_grammar:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "response_schema",
+                    "schema": json_schema,
+                    "strict": True
+                }
+            }
+            logger.debug("Using grammar-constrained generation with xgrammar2")
         
-        # Plan adaptation fallback - return minimal changes
-        if "adapt" in prompt_lower or "modify" in prompt_lower:
-            return '{"changes": [], "rationale": "No adaptation needed - using template as-is (fallback mode)"}'
-        
-        return "{}"
+        # Make request to vLLM server
+        try:
+            response = requests.post(
+                f"{self.base_url}/v1/chat/completions",
+                json=payload,
+                timeout=60
+            )
+            response.raise_for_status()
+            
+            # Parse response
+            result = response.json()
+            if "choices" not in result or len(result["choices"]) == 0:
+                raise ValueError("No choices in vLLM response")
+            
+            content = result["choices"][0]["message"]["content"]
+            logger.debug(f"vLLM response: {content[:200]}...")
+            
+            return content
+            
+        except requests.exceptions.Timeout:
+            logger.error("vLLM request timed out")
+            raise
+        except requests.exceptions.RequestException as e:
+            logger.error(f"vLLM request failed: {e}")
+            raise
+        except (KeyError, ValueError) as e:
+            logger.error(f"Failed to parse vLLM response: {e}")
+            raise
 
     def classify_intent(
         self, user_question: str, schema: SchemaProfile, max_intents: int = 3
@@ -145,7 +141,7 @@ class LLMClient:
         Args:
             user_question: User's analytical question
             schema: Inferred schema profile
-            max_intents: Maximum number of intents to return
+            max_intents: Maximum number of intents to return (unused for now)
 
         Returns:
             Intent classification
@@ -153,15 +149,20 @@ class LLMClient:
         # Build prompt for intent classification using PromptBuilder
         prompt = self.prompt_builder.build_intent_prompt(user_question, schema)
         
-        logger.info("Classifying user intent")
-        response = self._generate(prompt, max_tokens=200, stop=["\n\n"])
+        # Get JSON schema for grammar constraint
+        intent_schema = get_intent_schema()
         
-        # Parse response
+        logger.info("Classifying user intent with vLLM")
+        response = self._generate(prompt, max_tokens=200, json_schema=intent_schema)
+        
+        # Parse and validate response
         try:
             result = json.loads(response)
-            primary = IntentLabel(result.get("primary", "general_eda"))
-            confidence = result.get("confidence", 0.5)
-            reasoning = result.get("reasoning", "")
+            validated = validate_intent_output(result)
+            
+            primary = IntentLabel(validated.primary)
+            confidence = validated.confidence
+            reasoning = validated.reasoning
             
             intent = Intent(
                 label=primary,
@@ -172,8 +173,10 @@ class LLMClient:
             if reasoning:
                 logger.info(f"Reasoning: {reasoning}")
             return intent
+            
         except Exception as e:
             logger.warning(f"Failed to parse intent response: {e}. Using fallback.")
+            # Fallback to general_eda
             return Intent(
                 label=IntentLabel.GENERAL_EDA,
                 confidence=0.5,
@@ -202,33 +205,40 @@ class LLMClient:
         # Build prompt for plan adaptation using PromptBuilder
         prompt = self.prompt_builder.build_adaptation_prompt(template_plan, schema, intent, user_question)
         
-        logger.info("Adapting plan template")
-        response = self._generate(prompt, max_tokens=400, stop=["Here are", "Here is", "\n\nHere", "Additional"])
+        # Get JSON schema for grammar constraint
+        adaptation_schema = get_adaptation_schema()
         
-        # Debug: log LLM response
-        logger.debug(f"LLM adaptation response: {response[:200]}...")
+        logger.info("Adapting plan template with vLLM")
+        response = self._generate(prompt, max_tokens=400, json_schema=adaptation_schema)
         
-        # Parse adaptation instructions
+        # Parse and validate response
         try:
             result = json.loads(response)
-            changes = result.get("changes", [])
-            rationale = result.get("rationale", "")
+            validated = validate_adaptation_output(result)
             
-            logger.info(f"LLM suggested {len(changes)} changes: {rationale}")
+            changes = [change.dict(exclude_none=True) for change in validated.changes]
+            rationale = validated.rationale
             
-            # Apply changes to template
+            logger.info(f"vLLM suggested {len(changes)} changes: {rationale}")
+            
+            # Apply changes to template (reuse existing logic)
             adapted = self._apply_adaptations(template_plan, changes)
             adapted["adaptation_rationale"] = rationale
             adapted["changes_applied"] = len(changes)
             
             logger.info(f"Applied {len(changes)} adaptations to plan")
             return adapted
+            
         except Exception as e:
             logger.warning(f"Failed to parse adaptation response: {e}. Using template as-is.")
             return {**template_plan, "adaptation_rationale": "No adaptation applied", "changes_applied": 0}
 
     def _apply_adaptations(self, template: Dict[str, Any], changes: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """Apply adaptation changes to template."""
+        """
+        Apply adaptation changes to template.
+        
+        This is shared logic with the gpt4all client - could be extracted to a common module.
+        """
         import copy
         adapted = copy.deepcopy(template)
         

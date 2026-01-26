@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
 
+from autoviz_agent.registry.tools import tool
 from autoviz_agent.runtime.determinism import configure_matplotlib_backend, get_deterministic_style
 from autoviz_agent.utils.logging import get_logger
 
@@ -17,6 +18,13 @@ logger = get_logger(__name__)
 configure_matplotlib_backend()
 
 
+@tool(
+    description="Create line plot",
+    param_overrides={
+        "x": {"role": "temporal"},
+        "y": {"role": "numeric"},
+    },
+)
 def plot_line(
     df: pd.DataFrame,
     x: str,
@@ -58,6 +66,14 @@ def plot_line(
     return output_path
 
 
+@tool(
+    description="Create bar plot",
+    param_overrides={
+        "x": {"role": "categorical"},
+        "y": {"role": "numeric"},
+        "hue": {"role": "categorical"},
+    },
+)
 def plot_bar(
     df: pd.DataFrame,
     x: str,
@@ -65,6 +81,7 @@ def plot_bar(
     output_path: Path,
     title: Optional[str] = None,
     horizontal: bool = False,
+    hue: Optional[str] = None,
 ) -> Path:
     """
     Create a bar plot.
@@ -76,6 +93,7 @@ def plot_bar(
         output_path: Path to save plot
         title: Plot title
         horizontal: Whether to create horizontal bars
+        hue: Column for color grouping (creates grouped bars)
 
     Returns:
         Path to saved plot
@@ -83,16 +101,25 @@ def plot_bar(
     plt.rcParams.update(get_deterministic_style())
     fig, ax = plt.subplots()
 
-    if horizontal:
-        ax.barh(df[x], df[y])
-        ax.set_xlabel(y)
-        ax.set_ylabel(x)
+    if hue:
+        # Use seaborn for grouped bar chart
+        import seaborn as sns
+        if horizontal:
+            sns.barplot(data=df, y=x, x=y, hue=hue, ax=ax)
+        else:
+            sns.barplot(data=df, x=x, y=y, hue=hue, ax=ax)
+        ax.set_title(title or f"{y} by {x} and {hue}")
     else:
-        ax.bar(df[x], df[y])
-        ax.set_xlabel(x)
-        ax.set_ylabel(y)
-
-    ax.set_title(title or f"{y} by {x}")
+        if horizontal:
+            ax.barh(df[x], df[y])
+            ax.set_xlabel(y)
+            ax.set_ylabel(x)
+        else:
+            ax.bar(df[x], df[y])
+            ax.set_xlabel(x)
+            ax.set_ylabel(y)
+        ax.set_title(title or f"{y} by {x}")
+    
     plt.tight_layout()
     fig.savefig(output_path, dpi=100)
     plt.close(fig)
@@ -101,6 +128,14 @@ def plot_bar(
     return output_path
 
 
+@tool(
+    description="Create scatter plot",
+    param_overrides={
+        "x": {"role": "numeric"},
+        "y": {"role": "numeric"},
+        "hue": {"role": "categorical"},
+    },
+)
 def plot_scatter(
     df: pd.DataFrame,
     x: str,
@@ -147,6 +182,10 @@ def plot_scatter(
     return output_path
 
 
+@tool(
+    description="Create histogram",
+    param_overrides={"column": {"role": "numeric"}},
+)
 def plot_histogram(
     df: pd.DataFrame,
     column: str,
@@ -184,6 +223,7 @@ def plot_histogram(
     return output_path
 
 
+@tool(description="Create heatmap")
 def plot_heatmap(
     data: pd.DataFrame,
     output_path: Path,
@@ -228,6 +268,13 @@ def plot_heatmap(
     return output_path
 
 
+@tool(
+    description="Create box plot",
+    param_overrides={
+        "column": {"role": "numeric"},
+        "by": {"role": "categorical"},
+    },
+)
 def plot_boxplot(
     df: pd.DataFrame,
     column: str,

@@ -4,11 +4,16 @@ from typing import Any, Dict, List, Optional
 
 import pandas as pd
 
+from autoviz_agent.registry.tools import tool
 from autoviz_agent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
+@tool(
+    description="Handle missing values",
+    param_overrides={"columns": {"role": "any"}},
+)
 def handle_missing(
     df: pd.DataFrame, strategy: str = "drop", columns: Optional[List[str]] = None
 ) -> pd.DataFrame:
@@ -52,6 +57,10 @@ def handle_missing(
     return result
 
 
+@tool(
+    description="Parse datetime columns",
+    param_overrides={"columns": {"role": "temporal"}},
+)
 def parse_datetime(
     df: pd.DataFrame, columns: List[str], format: Optional[str] = None
 ) -> pd.DataFrame:
@@ -76,6 +85,7 @@ def parse_datetime(
     return result
 
 
+@tool(description="Convert column types")
 def cast_types(df: pd.DataFrame, type_map: Dict[str, str]) -> pd.DataFrame:
     """
     Cast column types.
@@ -110,6 +120,7 @@ def cast_types(df: pd.DataFrame, type_map: Dict[str, str]) -> pd.DataFrame:
     return result
 
 
+@tool(description="Clean column names")
 def normalize_column_names(df: pd.DataFrame) -> pd.DataFrame:
     """
     Normalize column names (lowercase, replace spaces with underscores).

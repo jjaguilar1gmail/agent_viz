@@ -106,10 +106,10 @@ def run_analysis(args) -> int:
         # Execute the full LangGraph pipeline
         result = pipeline.invoke(initial_state)
 
-        logger.info(f"✅ Analysis complete!")
-        logger.info(f"📄 Report: {artifact_manager.run_dir / 'report.md'}")
-        logger.info(f"📁 All results: {artifact_manager.run_dir}")
-        logger.info(f"📊 Observability artifacts:")
+        logger.info(f"[SUCCESS] Analysis complete!")
+        logger.info(f"[Report] {artifact_manager.run_dir / 'report.md'}")
+        logger.info(f"[Results] All results: {artifact_manager.run_dir}")
+        logger.info(f"[Artifacts] Observability artifacts:")
         logger.info(f"   - plan_template.json")
         logger.info(f"   - plan_adapted.json")
         logger.info(f"   - plan_diff.md")

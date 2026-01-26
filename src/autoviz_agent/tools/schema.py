@@ -5,11 +5,13 @@ from typing import Any, Dict, List
 import pandas as pd
 
 from autoviz_agent.models.state import ColumnProfile, SchemaProfile
+from autoviz_agent.registry.tools import tool
 from autoviz_agent.utils.logging import get_logger
 
 logger = get_logger(__name__)
 
 
+@tool(description="Infer dataset schema")
 def infer_schema(df: pd.DataFrame) -> SchemaProfile:
     """
     Infer dataset schema and column profiles.

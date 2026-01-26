@@ -59,9 +59,15 @@ def validate_tool_call(tool_call: Dict[str, Any]) -> ValidationResult:
         errors.append(f"Unknown tool: {tool_name}")
         return ValidationResult(is_valid=False, tool_name=tool_name, errors=errors)
 
-    # Validate using Pydantic model
+    # Validate using Pydantic model - only validate the core fields
     try:
-        ToolCallRequest(**tool_call)
+        # Create a minimal tool call for validation (exclude metadata fields)
+        minimal_call = {
+            "tool": tool_call.get("tool"),
+            "sequence": tool_call.get("sequence", 1),
+            "args": tool_call.get("args", {})
+        }
+        ToolCallRequest(**minimal_call)
     except ValidationError as e:
         for error in e.errors():
             field = ".".join(str(loc) for loc in error["loc"])
@@ -168,3 +174,48 @@ def reject_invalid_tool_calls(tool_calls: List[Dict[str, Any]]) -> Tuple[List[Di
     logger.info(f"Rejected {len(invalid)} invalid tool calls")
 
     return valid, invalid
+
+
+def repair_tool_call(tool_call: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Attempt to repair an invalid tool call by filling missing required parameters.
+
+    Args:
+        tool_call: Tool call specification
+
+    Returns:
+        Repaired tool call (may still be invalid)
+    """
+    tool_name = tool_call.get("tool", "unknown")
+    schema = TOOL_REGISTRY.get_schema(tool_name)
+    
+    if not schema:
+        return tool_call
+    
+    repaired_call = tool_call.copy()
+    args = repaired_call.get("args", {}).copy()
+    
+    # Fill missing required parameters with schema defaults
+    for param in schema.parameters:
+        if param.required and param.name not in args:
+            # Try to provide a sensible default
+            if param.name == "df":
+                args[param.name] = "$dataframe"
+            elif param.type == "string":
+                args[param.name] = "auto"
+            elif param.type == "integer":
+                args[param.name] = 0
+            elif param.type == "boolean":
+                args[param.name] = False
+            elif param.type == "array":
+                args[param.name] = []
+            elif param.type == "object":
+                args[param.name] = {}
+            else:
+                args[param.name] = None
+            
+            logger.info(f"Repaired {tool_name}: filled missing '{param.name}' with default")
+    
+    repaired_call["args"] = args
+    return repaired_call
+

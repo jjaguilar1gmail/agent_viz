@@ -8,7 +8,7 @@ import yaml
 
 from autoviz_agent.graph.state import GraphState
 from autoviz_agent.io.artifacts import ArtifactManager
-from autoviz_agent.llm.client import LLMClient
+from autoviz_agent.llm.factory import create_llm_client
 from autoviz_agent.models.state import Intent, RunStatus, SchemaProfile
 from autoviz_agent.planning.diff import generate_diff
 from autoviz_agent.planning.retrieval import PlanRetrieval
@@ -105,9 +105,9 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
     state.current_node = "classify_intent"
     
     try:
-        # Initialize LLM client
+        # Initialize LLM client using factory
         model_config = state.config["models"][state.config["default_model"]]
-        llm_client = LLMClient(model_config)
+        llm_client = create_llm_client(model_config)
         state.llm_client = llm_client
         
         # Classify intent
@@ -118,13 +118,25 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
         )
         state.intent = intent
         
+        # Track LLM interaction
+        state.llm_interactions.append({
+            "step": "intent_classification",
+            "input": state.question,
+            "output": {
+                "intent": intent.label.value,
+                "confidence": float(intent.confidence),
+            },
+            "node": "classify_intent"
+        })
+        
         logger.info(f"Intent: {intent.label} (confidence={intent.confidence:.2f})")
-        print(f"\n🎯 I classified your question as '{intent.label.value}'")
-        print(f"   Confidence: {intent.confidence:.0%}")
+        print(f"\n[Intent] Classified as '{intent.label.value}'")
+        print(f"         Confidence: {intent.confidence:.0%}")
         return {
             "current_node": "classify_intent",
             "llm_client": llm_client,
             "intent": intent,
+            "llm_interactions": state.llm_interactions,
         }
     except Exception as e:
         logger.error(f"Intent classification failed: {e}")
@@ -164,7 +176,7 @@ def select_template_node(state: GraphState) -> Dict[str, Any]:
         )
         
         logger.info(f"Selected template: {selected_template.get('template_id')}")
-        print(f"\n📋 I selected the '{selected_template.get('template_id')}' template")
+        print(f"\n[Template] I selected the '{selected_template.get('template_id')}' template")
         template_name = selected_template.get('name', selected_template.get('template_id'))
         print(f"   Template: {template_name}")
         print(f"   Reason: Best match for {state.intent.label.value} intent")
@@ -197,6 +209,20 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
         )
         state.adapted_plan = adapted_plan
         
+        # Track LLM interaction
+        state.llm_interactions.append({
+            "step": "plan_adaptation",
+            "input": {
+                "template": state.template_plan.get('template_id'),
+                "question": state.question
+            },
+            "output": {
+                "changes_applied": adapted_plan.get('changes_applied', 0),
+                "rationale": adapted_plan.get('adaptation_rationale', '')
+            },
+            "node": "adapt_plan"
+        })
+        
         # Save adapted plan
         adapted_path = state.artifact_manager.save_json(adapted_plan, "plan_adapted", "plan_adapted.json")
         
@@ -210,17 +236,18 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
         
         adaptation_rationale = adapted_plan.get('adaptation_rationale', '')
         if changes_applied > 0:
-            print(f"\n🔧 I adapted the plan with {changes_applied} change(s)")
+            print(f"\n[Adapted] Plan modified with {changes_applied} change(s)")
             if adaptation_rationale:
-                print(f"   Reason: {adaptation_rationale}")
+                print(f"          Reason: {adaptation_rationale}")
         else:
-            print(f"\n✅ The template fits your question well - no adaptations needed")
+            print(f"\n[Ready] Template fits your question - no adaptations needed")
             if adaptation_rationale:
-                print(f"   Note: {adaptation_rationale}")
+                print(f"        Note: {adaptation_rationale}")
         
         return {
             "current_node": "adapt_plan",
             "adapted_plan": adapted_plan,
+            "llm_interactions": state.llm_interactions,
         }
     except Exception as e:
         logger.error(f"Plan adaptation failed: {e}")
@@ -245,7 +272,8 @@ def compile_tool_calls_node(state: GraphState) -> Dict[str, Any]:
         tool_calls = state.llm_client.generate_tool_calls(
             state.adapted_plan, 
             state.schema,
-            state.artifact_manager
+            state.artifact_manager,
+            state.question  # Pass user question for column extraction
         )
         state.tool_calls = tool_calls
         
@@ -253,11 +281,11 @@ def compile_tool_calls_node(state: GraphState) -> Dict[str, Any]:
         tool_calls_path = state.artifact_manager.save_json(tool_calls, "tool_calls", "tool_calls.json")
         
         logger.info(f"Compiled {len(tool_calls)} tool calls")
-        print(f"\n🔨 I prepared {len(tool_calls)} analysis steps")
+        print(f"\n[Tools] Prepared {len(tool_calls)} analysis steps")
         for i, tc in enumerate(tool_calls[:3], 1):
-            print(f"   {i}. {tc['tool']} - {tc.get('description', '')}")
+            print(f"        {i}. {tc['tool']} - {tc.get('description', '')}")
         if len(tool_calls) > 3:
-            print(f"   ... and {len(tool_calls) - 3} more steps")
+            print(f"        ... and {len(tool_calls) - 3} more steps")
         return {
             "current_node": "compile_tool_calls",
             "tool_calls": tool_calls,
@@ -313,7 +341,7 @@ def execute_tools_node(state: GraphState) -> Dict[str, Any]:
         
         successful = sum(1 for r in results if r.get('success'))
         failed = len(results) - successful
-        print(f"\n✨ Execution complete: {successful} successful, {failed} failed")
+        print(f"\n[Complete] {successful} successful, {failed} failed")
         
         return {
             "current_node": "execute_tools",
@@ -351,6 +379,14 @@ def summarize_node(state: GraphState) -> Dict[str, Any]:
         from autoviz_agent.tools.schema import get_schema_summary
         schema_summary = get_schema_summary(state.schema)
         report.add_text(schema_summary)
+        
+        # Add LLM interactions section
+        if state.llm_interactions:
+            report.add_llm_interactions_section(state.llm_interactions)
+        
+        # Add charts section
+        if state.execution_results:
+            report.add_charts_section(state.execution_results)
         
         # Add provenance section
         report.add_header("Plan Provenance", level=2)
@@ -402,15 +438,15 @@ def error_node(state: GraphState) -> Dict[str, Any]:
     logger.error(f"Error node reached: {error_msg}")
     
     # Show user-friendly error message
-    print(f"\n❌ Error: {error_msg}")
+    print(f"\n[ERROR] {error_msg}")
     
     # Provide helpful hints based on error type
     if "not found" in error_msg.lower():
-        print("   💡 Tip: Check that the file path is correct and the file exists")
+        print("        Tip: Check that the file path is correct and the file exists")
     elif "permission" in error_msg.lower():
-        print("   💡 Tip: Check file permissions or try running with appropriate access")
+        print("   [TIP] Check file permissions or try running with appropriate access")
     elif "columns" in error_msg.lower() or "schema" in error_msg.lower():
-        print("   💡 Tip: The dataset may be empty or improperly formatted")
+        print("   [TIP] The dataset may be empty or improperly formatted")
     
     state.current_node = "error"
     
