@@ -194,6 +194,14 @@ Response:"""
         ])
         
         temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
+        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'float', 'int']]
+        categorical_cols = [c.name for c in schema.columns if c.dtype in ['object', 'string', 'category']]
+        
+        # Build detailed column list
+        column_details = '\n'.join([
+            f"  - {c.name} ({c.dtype}, cardinality: {c.cardinality})"
+            for c in schema.columns
+        ])
         
         return template.format(
             question=question,
@@ -203,7 +211,10 @@ Response:"""
             step_summary=step_summary,
             row_count=schema.row_count,
             column_count=len(schema.columns),
+            column_details=column_details,
             temporal_cols=', '.join(temporal_cols) if temporal_cols else 'none',
+            numeric_cols=', '.join(numeric_cols) if numeric_cols else 'none',
+            categorical_cols=', '.join(categorical_cols) if categorical_cols else 'none',
             data_shape=schema.data_shape,
             schema_json=json.dumps(ADAPTATION_SCHEMA, indent=2)
         )
@@ -223,6 +234,14 @@ Response:"""
         ])
         
         temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
+        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'float', 'int']]
+        categorical_cols = [c.name for c in schema.columns if c.dtype in ['object', 'string', 'category']]
+        
+        # Build detailed column list
+        column_details = '\n'.join([
+            f"  - {c.name} ({c.dtype}, cardinality: {c.cardinality})"
+            for c in schema.columns
+        ])
         
         return f"""Review this analysis plan template and suggest modifications based on the user's specific question.
 
@@ -235,8 +254,13 @@ Current steps:
 
 DATASET CONTEXT:
 - Rows: {schema.row_count}, Columns: {len(schema.columns)}
-- Temporal columns: {', '.join(temporal_cols) if temporal_cols else 'none'}
 - Shape: {schema.data_shape}
+
+AVAILABLE COLUMNS (use EXACT names):
+{column_details}
+- Temporal columns: {', '.join(temporal_cols) if temporal_cols else 'none'}
+- Numeric columns: {', '.join(numeric_cols) if numeric_cols else 'none'}
+- Categorical columns: {', '.join(categorical_cols) if categorical_cols else 'none'}
 
 AVAILABLE TOOLS (use EXACT names):
 - aggregate: Group data and compute aggregations (use for "compare by", "group by")
@@ -258,6 +282,11 @@ EXAMPLES:
 - User asks "compare by region and product" → add step with tool="aggregate", params={{"group_by": ["region", "product_category"], "agg_func": "sum"}}
 - Template fits perfectly → return empty changes array
 
+CRITICAL RULES:
+1. ONLY use column names that appear in "AVAILABLE COLUMNS" above
+2. If the user mentions a concept (like "product type") but the actual column is named differently (like "product_category"), use the ACTUAL column name
+3. Never invent or guess column names - only use what you see in the schema
+
 RESPONSE FORMAT (JSON only, no preamble):
 {{"changes": [{{"action": "add|remove|modify", "step_id": "<id>", "tool": "<exact_tool_name>", "description": "<reason>", "params": {{"df": "$dataframe"}}}}], "rationale": "<overall explanation>"}}
 
@@ -265,6 +294,7 @@ IMPORTANT:
 - tool MUST be an exact tool name from the list above (e.g., "aggregate", NOT "aggregate by region")
 - For grouping/comparing, use tool="aggregate" with group_by parameter
 - step_id must be unique (e.g., "compare_by_region_product")
+- Column names in params MUST exactly match the names from "AVAILABLE COLUMNS"
 
 Your JSON response:"""
 
