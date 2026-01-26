@@ -55,6 +55,7 @@ If using xgrammar2, use the schema directly as a decoding constraint.
 src/autoviz_agent/llm/
   client.py
   prompts.py
+  llm_contracts.py
 templates/
   prompts/
     intent.md

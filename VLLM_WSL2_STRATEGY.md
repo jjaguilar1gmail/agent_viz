@@ -147,6 +147,8 @@ Minimal change idea:
 - Add a `backend: vllm` model entry in `config.yaml`
 - In `LLMClient`, if backend is vllm, call `POST /v1/chat/completions`
   with the prompt and parse the JSON response.
+- Add a `src/autoviz_agent/llm/llm_contracts.py` file for JSON output contracts
+  used by xgrammar2.
 
 If you want, I can implement this and add xgrammar2 config options.
 
@@ -180,4 +182,3 @@ If you meant the model's Hugging Face `config.json`:
 ## Notes
 - WSL sees your Windows C: drive at `/mnt/c`.
 - For best performance, keep models inside the WSL filesystem, not `/mnt/c`.
-- If you prefer Docker instead of WSL2, you will also need the NVIDIA Container Toolkit. - but as stated we are not going the Docker route, we are going WSL2.

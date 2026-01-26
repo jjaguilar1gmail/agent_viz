@@ -8,7 +8,7 @@ import yaml
 
 from autoviz_agent.graph.state import GraphState
 from autoviz_agent.io.artifacts import ArtifactManager
-from autoviz_agent.llm.client import LLMClient
+from autoviz_agent.llm.factory import create_llm_client
 from autoviz_agent.models.state import Intent, RunStatus, SchemaProfile
 from autoviz_agent.planning.diff import generate_diff
 from autoviz_agent.planning.retrieval import PlanRetrieval
@@ -105,9 +105,9 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
     state.current_node = "classify_intent"
     
     try:
-        # Initialize LLM client
+        # Initialize LLM client using factory
         model_config = state.config["models"][state.config["default_model"]]
-        llm_client = LLMClient(model_config)
+        llm_client = create_llm_client(model_config)
         state.llm_client = llm_client
         
         # Classify intent

@@ -1,7 +1,7 @@
 # AutoViz Agent Configuration
 
 # Default model to use
-default_model: "phi-3.5-mini"
+default_model: "qwen-1.5b-vllm"  # Change from "phi-3.5-mini"
 
 # Model definitions
 models:
@@ -60,6 +60,34 @@ models:
     top_p: 0.9
     max_tokens: 2048
 
+  # vLLM backend models (run in WSL2 with GPU acceleration)
+  phi-4-mini-vllm:
+    name: "Phi-4-mini-instruct"
+    backend: "vllm"
+    url: "http://localhost:8000"
+    model_name: "phi-4-mini"  # Model identifier on vLLM server
+    temperature: 0.1
+    max_tokens: 2048
+    use_grammar: true  # Enable xgrammar2 for structured outputs
+
+  llama-3.1-8b-vllm:
+    name: "Llama 3.1 8B Instruct"
+    backend: "vllm"
+    url: "http://localhost:8000"
+    model_name: "llama-3.1-8b"
+    temperature: 0.1
+    max_tokens: 2048
+    use_grammar: true
+
+  qwen-1.5b-vllm:
+    name: "Qwen 2.5 1.5B Instruct"
+    backend: "vllm"
+    url: "http://localhost:8000"
+    model_name: "/home/effguilar/models/qwen-1.5b-4bit"  # Model identifier from server
+    temperature: 0.1
+    max_tokens: 1024  # Model's max context
+    use_grammar: true  # Enable xgrammar2 for structured outputs
+
 # Backend-specific settings
 backends:
   llama.cpp:
@@ -69,9 +97,11 @@ backends:
     n_threads: 8
     
   vllm:
-    enabled: false  # Optional backend
-    host: "localhost"
-    port: 8000
+    # vLLM server configuration (runs in WSL2 with GPU)
+    url: "http://localhost:8000"
+    timeout: 60  # Request timeout in seconds
+    use_grammar: true  # Enable xgrammar2 for structured JSON outputs
+    verify_ssl: false  # Set to true if using HTTPS with valid cert
 
 # Plan templates directory
 templates_dir: "templates"
