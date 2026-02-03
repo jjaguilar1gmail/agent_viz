@@ -71,7 +71,7 @@ def main():
     print(f"  - Prompt System: Working")
     print(f"  - Ready for execution: Yes")
     
-    print("\n⚠️  Note: vLLM server requires PyTorch fix (see VLLM_STATUS.md)")
+    print("\n⚠️  Note: vLLM server requires PyTorch fix (see docs/VLLM_STATUS.md)")
     print("    Currently using gpt4all backend which is fully functional.")
 
 if __name__ == "__main__":

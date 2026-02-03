@@ -53,7 +53,7 @@ PyTorch 2.9.1 has a regex compilation bug preventing vLLM server startup:
 - `test_vllm_backend.py` (integration tests)
 - `VLLM_IMPLEMENTATION.md` (documentation)
 - `VLLM_STATUS.md` (server status)
-- `setup_vllm_wsl.sh` (WSL2 installation script)
+- `scripts/setup_vllm_wsl.sh` (WSL2 installation script)
 - `test_implementation.py` (verification script)
 
 **Modified Files:**
