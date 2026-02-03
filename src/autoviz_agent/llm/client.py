@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 from autoviz_agent.models.state import Intent, IntentLabel, SchemaProfile
 from autoviz_agent.utils.logging import get_logger
 from autoviz_agent.llm.prompts import PromptBuilder
+from autoviz_agent.registry.intents import classify_intent_by_keywords
+from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
 
 logger = get_logger(__name__)
 
@@ -24,6 +26,8 @@ class LLMClient:
         self.model_config = model_config
         self.model_path = Path(model_config.get("path", ""))
         self._llm = None
+        self.last_prompt: Optional[str] = None
+        self.last_response: Optional[str] = None
         
         # Initialize prompt builder with optional template directory
         templates_dir = Path(__file__).parent.parent.parent.parent / "templates" / "prompts"
@@ -121,14 +125,14 @@ class LLMClient:
             else:
                 question_part = prompt_lower
                 
-            if any(word in question_part for word in ["time", "trend", "temporal", "series", "over time"]):
-                return '{"primary": "time_series_investigation", "secondary": ["general_eda"], "confidence": 0.7, "reasoning": "Time-based keywords detected"}'
-            elif any(word in question_part for word in ["anomaly", "outlier", "unusual"]):
-                return '{"primary": "anomaly_detection", "secondary": ["general_eda"], "confidence": 0.7, "reasoning": "Anomaly keywords detected"}'
-            elif any(word in question_part for word in ["segment", "group", "compare", "difference"]):
-                return '{"primary": "comparative_analysis", "secondary": ["segmentation_drivers"], "confidence": 0.7, "reasoning": "Comparison keywords detected"}'
-            else:
-                return '{"primary": "general_eda", "secondary": [], "confidence": 0.6, "reasoning": "General exploration"}'
+            primary = classify_intent_by_keywords(question_part, exposed_only=True)
+            return json.dumps(
+                {
+                    "primary": primary,
+                    "confidence": 0.7 if primary != "general_eda" else 0.6,
+                    "reasoning": "Keyword-based fallback classification",
+                }
+            )
         
         # Plan adaptation fallback - return minimal changes
         if "adapt" in prompt_lower or "modify" in prompt_lower:
@@ -152,9 +156,11 @@ class LLMClient:
         """
         # Build prompt for intent classification using PromptBuilder
         prompt = self.prompt_builder.build_intent_prompt(user_question, schema)
+        self.last_prompt = prompt
         
         logger.info("Classifying user intent")
         response = self._generate(prompt, max_tokens=200, stop=["\n\n"])
+        self.last_response = response
         
         # Parse response
         try:
@@ -201,9 +207,11 @@ class LLMClient:
         """
         # Build prompt for plan adaptation using PromptBuilder
         prompt = self.prompt_builder.build_adaptation_prompt(template_plan, schema, intent, user_question)
+        self.last_prompt = prompt
         
         logger.info("Adapting plan template")
         response = self._generate(prompt, max_tokens=400, stop=["Here are", "Here is", "\n\nHere", "Additional"])
+        self.last_response = response
         
         # Debug: log LLM response
         logger.debug(f"LLM adaptation response: {response[:200]}...")
@@ -233,17 +241,8 @@ class LLMClient:
         adapted = copy.deepcopy(template)
         
         # Valid tool names for validation
-        valid_tools = [
-            "load_dataset", "sample_rows", "save_dataframe",
-            "infer_schema",
-            "handle_missing", "parse_datetime", "cast_types", "normalize_column_names",
-            "compute_summary_stats", "compute_correlations", "compute_value_counts", 
-            "compute_percentiles", "aggregate",
-            "detect_anomalies", "segment_metric", "compute_distributions", 
-            "compare_groups", "compute_time_series_features",
-            "plot_line", "plot_bar", "plot_scatter", "plot_histogram", 
-            "plot_heatmap", "plot_boxplot"
-        ]
+        ensure_default_tools_registered()
+        valid_tools = set(TOOL_REGISTRY.list_tools())
         
         for change in changes:
             action = change.get("action")

@@ -137,6 +137,103 @@ class ReportWriter:
                     self.add_text(str(output_data))
             
             self.add_text("")  # Empty line for spacing
+
+    def add_key_metrics_section(self, execution_results: List[Dict[str, Any]]) -> None:
+        """
+        Add key metrics derived from non-chart tools.
+
+        Args:
+            execution_results: List of execution results from tools
+        """
+        def is_scalar(value: Any) -> bool:
+            return isinstance(value, (int, float, str, bool)) or value is None
+
+        def scalar_items(data: Dict[str, Any]) -> Dict[str, Any]:
+            return {k: v for k, v in data.items() if is_scalar(v)}
+
+        dataframe_outputs = []
+        metric_sections = []
+
+        for result in execution_results:
+            if not result.get("success"):
+                continue
+
+            tool = result.get("tool", "unknown")
+            data = result.get("result", {})
+
+            if isinstance(data, dict) and data.get("type") == "dataframe":
+                dataframe_outputs.append({
+                    "tool": tool,
+                    "shape": data.get("shape"),
+                    "columns": data.get("columns"),
+                })
+                continue
+
+            metric_sections.append({"tool": tool, "data": data})
+
+        if not metric_sections and not dataframe_outputs:
+            return
+
+        self.add_header("Key Metrics", level=2)
+
+        for item in metric_sections:
+            tool = item["tool"]
+            data = item["data"]
+
+            if isinstance(data, dict):
+                nested_dicts = {
+                    k: v for k, v in data.items()
+                    if isinstance(v, dict) and scalar_items(v)
+                }
+                if nested_dicts:
+                    self.add_header(f"{tool} (summary)", level=3)
+                    inner_keys = sorted({key for v in nested_dicts.values() for key in v.keys()})
+                    rows = []
+                    for outer_key, values in nested_dicts.items():
+                        row = [outer_key] + [values.get(k, "") for k in inner_keys]
+                        rows.append(row)
+                    self.add_table(["item"] + inner_keys, rows)
+                    continue
+
+                scalars = scalar_items(data)
+                if scalars:
+                    self.add_header(f"{tool} (metrics)", level=3)
+                    rows = [[k, v] for k, v in scalars.items()]
+                    self.add_table(["metric", "value"], rows)
+                    continue
+
+                if data:
+                    self.add_header(f"{tool} (details)", level=3)
+                    self.add_text(str(data))
+                continue
+
+            if isinstance(data, list) and data:
+                if all(isinstance(item, dict) for item in data):
+                    self.add_header(f"{tool} (table)", level=3)
+                    headers = sorted({key for row in data for key in row.keys()})
+                    rows = [[row.get(h, "") for h in headers] for row in data]
+                    self.add_table(headers, rows)
+                else:
+                    self.add_header(f"{tool} (list)", level=3)
+                    self.add_list([str(item) for item in data])
+                continue
+
+            if data not in (None, {}, []):
+                self.add_header(f"{tool} (value)", level=3)
+                self.add_text(str(data))
+
+        if dataframe_outputs:
+            self.add_header("DataFrame Outputs", level=3)
+            rows = []
+            for item in dataframe_outputs:
+                shape = item.get("shape") or ""
+                columns = item.get("columns") or []
+                rows.append([
+                    item.get("tool", ""),
+                    f"{shape[0]}x{shape[1]}" if shape else "",
+                    ", ".join(columns),
+                ])
+            self.add_table(["tool", "shape", "columns"], rows)
     
     def add_charts_section(self, execution_results: List[Dict[str, Any]]) -> None:
         """

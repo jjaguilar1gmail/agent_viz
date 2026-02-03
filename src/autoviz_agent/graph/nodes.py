@@ -128,6 +128,29 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
             },
             "node": "classify_intent"
         })
+        state.llm_requests.append({
+            "step": "intent_classification",
+            "prompt": getattr(llm_client, "last_prompt", None),
+            "response": getattr(llm_client, "last_response", None),
+            "node": "classify_intent",
+        })
+        state.artifact_manager.save_json(
+            state.llm_requests,
+            "llm_requests",
+            "llm_requests.json",
+        )
+        if state.llm_requests[-1].get("prompt"):
+            state.artifact_manager.save_text(
+                state.llm_requests[-1]["prompt"],
+                "llm_requests",
+                "llm_intent_prompt.txt",
+            )
+        if state.llm_requests[-1].get("response"):
+            state.artifact_manager.save_text(
+                state.llm_requests[-1]["response"],
+                "llm_requests",
+                "llm_intent_response.txt",
+            )
         
         logger.info(f"Intent: {intent.label} (confidence={intent.confidence:.2f})")
         print(f"\n[Intent] Classified as '{intent.label.value}'")
@@ -222,6 +245,29 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
             },
             "node": "adapt_plan"
         })
+        state.llm_requests.append({
+            "step": "plan_adaptation",
+            "prompt": getattr(state.llm_client, "last_prompt", None),
+            "response": getattr(state.llm_client, "last_response", None),
+            "node": "adapt_plan",
+        })
+        state.artifact_manager.save_json(
+            state.llm_requests,
+            "llm_requests",
+            "llm_requests.json",
+        )
+        if state.llm_requests[-1].get("prompt"):
+            state.artifact_manager.save_text(
+                state.llm_requests[-1]["prompt"],
+                "llm_requests",
+                "llm_adapt_prompt.txt",
+            )
+        if state.llm_requests[-1].get("response"):
+            state.artifact_manager.save_text(
+                state.llm_requests[-1]["response"],
+                "llm_requests",
+                "llm_adapt_response.txt",
+            )
         
         # Save adapted plan
         adapted_path = state.artifact_manager.save_json(adapted_plan, "plan_adapted", "plan_adapted.json")
@@ -385,6 +431,10 @@ def summarize_node(state: GraphState) -> Dict[str, Any]:
         if state.llm_interactions:
             report.add_llm_interactions_section(state.llm_interactions)
         
+        # Add key metrics section
+        if state.execution_results:
+            report.add_key_metrics_section(state.execution_results)
+
         # Add charts section
         if state.execution_results:
             report.add_charts_section(state.execution_results)

@@ -58,6 +58,9 @@ class GraphState(BaseModel):
     llm_interactions: list[Dict[str, Any]] = Field(
         default_factory=list, description="Log of LLM interactions"
     )
+    llm_requests: list[Dict[str, Any]] = Field(
+        default_factory=list, description="Raw LLM request/response payloads"
+    )
 
     # Status tracking
     current_node: str = Field(default="initialize", description="Current node")

@@ -3,7 +3,15 @@
 import json
 from pathlib import Path
 from typing import Any, Dict, List
+
 from autoviz_agent.models.state import Intent, SchemaProfile
+from autoviz_agent.registry.intents import (
+    get_intent_labels,
+    render_intent_catalog,
+    render_intent_examples,
+    render_intent_rules,
+)
+from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
 
 
 # JSON Schemas for LLM outputs
@@ -12,7 +20,7 @@ INTENT_SCHEMA = {
     "properties": {
         "primary": {
             "type": "string",
-            "enum": ["general_eda", "time_series_investigation", "anomaly_detection", "comparative_analysis"]
+            "enum": get_intent_labels(exposed_only=True),
         },
         "confidence": {"type": "number", "minimum": 0.0, "maximum": 1.0},
         "reasoning": {"type": "string"}
@@ -102,6 +110,9 @@ class PromptBuilder:
         
         return template.format(
             question=question,
+            intent_catalog=render_intent_catalog(),
+            intent_rules=render_intent_rules(),
+            intent_examples=render_intent_examples(),
             row_count=schema.row_count,
             column_count=len(schema.columns),
             column_info=column_info,
@@ -122,16 +133,10 @@ class PromptBuilder:
         return f"""Classify the user's analytical intent based on their question and the dataset structure.
 
 AVAILABLE INTENTS (with templates):
-1. general_eda - Broad exploration (e.g., "summarize this data", "what's in here?")
-2. time_series_investigation - Temporal patterns (e.g., "trends over time", "seasonal patterns")
-3. anomaly_detection - Outliers and unusual values (e.g., "find anomalies", "detect outliers")
-4. comparative_analysis - Compare groups/categories (e.g., "compare by region", "revenue by product")
+{render_intent_catalog()}
 
 INTENT SELECTION RULES:
-- "compare", "by", "across", "versus", "difference between" → comparative_analysis
-- "time", "trend", "over time", "temporal" → time_series_investigation
-- "anomaly", "outlier", "unusual", "abnormal" → anomaly_detection
-- General questions → general_eda
+{render_intent_rules()}
 
 USER QUESTION: "{question}"
 
@@ -142,9 +147,7 @@ DATASET SCHEMA:
 - Numeric columns: {len(numeric_cols)}
 
 EXAMPLES:
-Question: "Compare revenue by region and product" → {{"primary": "comparative_analysis", "confidence": 0.95, "reasoning": "Keywords 'compare' and 'by' indicate comparison across categories"}}
-Question: "Analyze revenue trends over time" → {{"primary": "time_series_investigation", "confidence": 0.95, "reasoning": "Keywords 'trends' and 'over time' indicate temporal analysis"}}
-Question: "Find unusual sales patterns" → {{"primary": "anomaly_detection", "confidence": 0.90, "reasoning": "User explicitly asks for 'unusual' patterns"}}
+{render_intent_examples()}
 
 Your response (JSON only, no other text):
 {{"primary": "<intent>", "confidence": 0.0-1.0, "reasoning": "<why you chose this intent>"}}
@@ -216,6 +219,7 @@ Response:"""
             numeric_cols=', '.join(numeric_cols) if numeric_cols else 'none',
             categorical_cols=', '.join(categorical_cols) if categorical_cols else 'none',
             data_shape=schema.data_shape,
+            tool_catalog=self._build_tool_catalog(),
             schema_json=json.dumps(ADAPTATION_SCHEMA, indent=2)
         )
 
@@ -263,13 +267,7 @@ AVAILABLE COLUMNS (use EXACT names):
 - Categorical columns: {', '.join(categorical_cols) if categorical_cols else 'none'}
 
 AVAILABLE TOOLS (use EXACT names):
-- aggregate: Group data and compute aggregations (use for "compare by", "group by")
-- segment_metric: Segment metric by category
-- detect_anomalies: Detect outliers or unusual values
-- compute_summary_stats: Basic statistics (mean, std, etc.)
-- compute_correlations: Correlation matrix
-- compute_distributions: Distribution analysis
-- plot_line, plot_bar, plot_scatter, plot_histogram, plot_heatmap, plot_boxplot
+{self._build_tool_catalog()}
 
 YOUR TASK:
 1. Check if the user question mentions specific requirements not in the template
@@ -277,10 +275,10 @@ YOUR TASK:
 3. Suggest adding, removing, or modifying steps to better match the question
 
 EXAMPLES:
-- User asks "find outliers" → add step with tool="detect_anomalies"
-- User asks "compare revenue by region" → add step with tool="aggregate", params={{"group_by": ["region"], "agg_func": "sum"}}
-- User asks "compare by region and product" → add step with tool="aggregate", params={{"group_by": ["region", "product_category"], "agg_func": "sum"}}
-- Template fits perfectly → return empty changes array
+- User asks "find outliers" -> add step with tool="detect_anomalies"
+- User asks "compare revenue by region" -> add step with tool="aggregate", params={{"group_by": ["region"], "agg_func": "sum"}}
+- User asks "compare by region and product" -> add step with tool="aggregate", params={{"group_by": ["region", "product_category"], "agg_func": "sum"}}
+- Template fits perfectly -> return empty changes array
 
 CRITICAL RULES:
 1. ONLY use column names that appear in "AVAILABLE COLUMNS" above
@@ -290,13 +288,27 @@ CRITICAL RULES:
 RESPONSE FORMAT (JSON only, no preamble):
 {{"changes": [{{"action": "add|remove|modify", "step_id": "<id>", "tool": "<exact_tool_name>", "description": "<reason>", "params": {{"df": "$dataframe"}}}}], "rationale": "<overall explanation>"}}
 
-IMPORTANT: 
+IMPORTANT:
 - tool MUST be an exact tool name from the list above (e.g., "aggregate", NOT "aggregate by region")
 - For grouping/comparing, use tool="aggregate" with group_by parameter
 - step_id must be unique (e.g., "compare_by_region_product")
 - Column names in params MUST exactly match the names from "AVAILABLE COLUMNS"
 
 Your JSON response:"""
+
+    def _build_tool_catalog(self) -> str:
+        ensure_default_tools_registered()
+        schemas = TOOL_REGISTRY.get_all_schemas()
+        if not schemas:
+            return "- (no tools registered)"
+        lines = []
+        for name in sorted(schemas.keys()):
+            description = (schemas[name].description or "").strip()
+            if description:
+                lines.append(f"- **{name}**: {description}")
+            else:
+                lines.append(f"- **{name}**")
+        return "\n".join(lines)
 
     def get_schema(self, prompt_type: str) -> Dict[str, Any] | None:
         """

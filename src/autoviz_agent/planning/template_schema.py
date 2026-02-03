@@ -2,6 +2,8 @@
 
 from typing import Any, Dict
 
+from autoviz_agent.registry.intents import get_intent_labels
+
 # JSON Schema for plan templates
 PLAN_TEMPLATE_SCHEMA: Dict[str, Any] = {
     "$schema": "http://json-schema.org/draft-07/schema#",
@@ -17,13 +19,7 @@ PLAN_TEMPLATE_SCHEMA: Dict[str, Any] = {
             "type": "array",
             "items": {
                 "type": "string",
-                "enum": [
-                    "general_eda",
-                    "time_series_investigation",
-                    "segmentation_drivers",
-                    "anomaly_detection",
-                    "comparative_analysis",
-                ],
+                "enum": get_intent_labels(exposed_only=False),
             },
             "minItems": 1,
             "description": "Supported intent labels",
