@@ -160,6 +160,7 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
             "llm_client": llm_client,
             "intent": intent,
             "llm_interactions": state.llm_interactions,
+            "llm_requests": state.llm_requests,
         }
     except Exception as e:
         logger.error(f"Intent classification failed: {e}")
@@ -294,6 +295,7 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
             "current_node": "adapt_plan",
             "adapted_plan": adapted_plan,
             "llm_interactions": state.llm_interactions,
+            "llm_requests": state.llm_requests,
         }
     except Exception as e:
         logger.error(f"Plan adaptation failed: {e}")
@@ -430,6 +432,16 @@ def summarize_node(state: GraphState) -> Dict[str, Any]:
         # Add LLM interactions section
         if state.llm_interactions:
             report.add_llm_interactions_section(state.llm_interactions)
+        if not state.llm_requests and state.artifact_manager:
+            try:
+                state.llm_requests = state.artifact_manager.load_json(
+                    "llm_requests",
+                    "llm_requests.json",
+                )
+            except Exception as e:
+                logger.debug(f"Failed to load llm_requests.json: {e}")
+        if state.llm_requests:
+            report.add_llm_request_details(state.llm_requests)
         
         # Add key metrics section
         if state.execution_results:

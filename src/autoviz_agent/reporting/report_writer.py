@@ -138,6 +138,34 @@ class ReportWriter:
             
             self.add_text("")  # Empty line for spacing
 
+    def add_llm_request_details(self, requests: List[Dict[str, Any]]) -> None:
+        """
+        Add full LLM request/response payloads.
+
+        Args:
+            requests: List of LLM request records
+        """
+        if not requests:
+            return
+
+        self.add_header("LLM Request Details", level=2)
+        self.add_text(
+            "This section captures the exact prompts and raw responses sent to the LLM."
+        )
+
+        for entry in requests:
+            step_name = entry.get("step", "unknown").replace("_", " ").title()
+            self.add_header(step_name, level=3)
+            prompt = entry.get("prompt")
+            response = entry.get("response")
+            if prompt:
+                self.add_text("**Prompt**:")
+                self.add_code_block(prompt, language="")
+            if response:
+                self.add_text("**Response**:")
+                self.add_code_block(response, language="json")
+            self.add_text("")
+
     def add_key_metrics_section(self, execution_results: List[Dict[str, Any]]) -> None:
         """
         Add key metrics derived from non-chart tools.
