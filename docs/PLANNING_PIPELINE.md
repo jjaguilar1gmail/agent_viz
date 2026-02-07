@@ -16,13 +16,12 @@ Observed issues:
 
 The changes below formalize requirements, narrow tools, and add coverage checks so the plan must reflect the user's request, even with smaller models.
 
-## New Dependencies (Optional)
+## New Dependencies (Required)
 
-These are for tool retrieval and embeddings if you adopt the narrowing strategy.
+These are required for tool retrieval and embeddings.
 
-- Vector index: `faiss-cpu` (fast and common) or `hnswlib` (lightweight, simple install).
-- Embeddings: `sentence-transformers` with `all-MiniLM-L6-v2` (small and fast) or `bge-small-en` (strong recall).
-- Hosted embeddings alternative: OpenAI `text-embedding-3-small` via API if you already use OpenAI.
+- Vector index: `faiss-cpu`.
+- Embeddings: `sentence-transformers` with `bge-small-en` as the default model for robust short-text retrieval.
 
 ## Goals
 
@@ -34,13 +33,20 @@ These are for tool retrieval and embeddings if you adopt the narrowing strategy.
 
 ## High-Level Flow
 
-1) Extract structured requirements from the user question.
-2) Narrow tool candidates using metadata and retrieval.
-3) Adapt a template plan using the requirements and candidate tools.
-4) Validate coverage and remove unjustified steps.
-5) Execute with runtime repairs if needed.
+1) Classify intent and select the base template.
+2) Extract structured requirements from the user question.
+3) Narrow tool candidates using metadata and retrieval.
+4) Adapt the template plan using requirements and candidate tools.
+5) Validate coverage and remove unjustified steps.
+6) Execute with runtime repairs if needed.
 
-## 1) Structured Requirements Extraction
+## 1) Intent Classification and Template Selection
+
+Intent classification is unchanged from today: it selects a base template that matches the
+primary analysis type (time series, comparative, anomaly, etc.). This step must remain
+compatible with existing prompt specs and xgrammar2 contracts.
+
+## 2) Structured Requirements Extraction
 
 LLM produces a small schema. The schema is the contract for planning.
 
@@ -62,7 +68,34 @@ Rules:
 - Do not infer extra analysis beyond the question.
 - Leave fields empty or unknown if not present.
 
-## 2) Tool Metadata and Catalog
+### Requirement-to-Capability Mapping (Deterministic)
+
+The coverage check should be deterministic and rely on a fixed mapping from requirements to tool capabilities.
+This avoids LLM disagreement and makes missing coverage actionable.
+
+Suggested mapping:
+- analysis: total -> requires capability: aggregate
+- analysis: compare -> requires capability: aggregate or segment
+- analysis: trend -> requires capability: time_series_plot or time_series_features
+- analysis: distribution -> requires capability: distribution_plot or distribution_stats
+- analysis: anomaly -> requires capability: anomaly_detection
+- outputs: chart -> requires at least one plot capability
+- outputs: table -> requires aggregate or summary_stats
+- group_by: non-empty -> requires aggregate or segment with group_by params
+- time: column set -> requires parse_datetime (unless already typed) and time-aware plot or features
+
+Each planned step must declare which requirement(s) it satisfies.
+
+#### Risk Mitigations
+
+- Version the mapping registry and require updates in CI when new requirement labels or tool capabilities are added.
+- Allow many-to-many mappings (one requirement satisfied by multiple capabilities) to reduce false negatives.
+- Add an "unknown requirement" policy: warn and trigger re-extraction with the allowed label set instead of hard failing.
+- Maintain capability aliases to avoid breakage from naming drift.
+- Enforce label validation: if extraction emits labels outside the allowed set, block and re-run extraction.
+- Keep a minimal core capability set to avoid total failure when the registry is incomplete.
+
+## 3) Tool Metadata and Catalog
 
 Every tool has compact metadata in a registry file (YAML or JSON).
 
@@ -84,7 +117,12 @@ Example metadata:
 
 This avoids embedding full tool lists in prompts.
 
-## 3) Tool Narrowing Strategy
+Embedding note:
+- Precompute and embed a compact tool document that includes name + description + capabilities + key params + outputs.
+- At runtime, only embed the query derived from requirements (not the tools).
+- Compare query embeddings against the precomputed tool embeddings in FAISS.
+
+## 4) Tool Narrowing Strategy
 
 Goal: provide the LLM a small, relevant tool subset.
 
@@ -95,10 +133,16 @@ Pipeline:
 - Add a tiny safety set (aggregate, plot_line, compute_summary_stats) if not present.
 - Cap total tools (8-12) to keep the prompt compact.
 
+Precedence and conflict resolution:
+- Template-curated tools are always included.
+- Retrieval tools are appended until the cap is reached.
+- Safety set is appended only if missing, even if it exceeds the cap by 1-2 tools.
+- If the cap is exceeded, drop the lowest-scoring retrieval tools first, never drop template or safety tools.
+
 If you want pure RAG, add a fallback step if coverage validation fails:
 - Expand N or run a tool discovery query focused on missing requirements.
 
-## 4) Plan Adaptation
+## 5) Plan Adaptation
 
 Input:
 - Requirements schema
@@ -113,7 +157,19 @@ Hard constraints:
 - Remove steps with no matching requirement.
 - For group_by or time requirements, ensure aggregate or segmentation precedes plotting.
 
-## 5) Coverage and Consistency Check
+### Time Grain Handling
+
+Recommendation: infer time grain during extraction with a closed enum, but only select a grain if explicitly mentioned.
+If grain is unknown, defer to execution with an auto-grain policy based on data span and density.
+
+Example policy:
+- < 90 days span or > 60 points: daily
+- 90-365 days: weekly
+- > 365 days: monthly
+
+This keeps extraction conservative while ensuring plots remain readable.
+
+## 6) Coverage and Consistency Check
 
 A deterministic checker validates:
 
@@ -129,33 +185,59 @@ Missing coverage: group_by=[region, product_category]
 Remove unjustified steps: detect_anomalies
 ```
 
-## 6) Execution and Repair
+## 7) Execution and Repair
 
 During tool execution:
 - Validate parameters against tool schemas.
 - Repair known issues (missing df, invalid params) and log changes.
 - Record provenance for each repair.
 
+Repair policy:
+- Safe repairs (missing df, column name casing, default params) are allowed with explicit logging.
+- Semantic repairs (changing group_by, metric, or time grain) should fail fast and trigger re-planning.
+- Any repair that changes analysis intent must be rejected.
+
 ## Prompt Set (Minimal)
 
-### A) Requirement Extraction Prompt (LLM)
+### A) Intent Classification Prompt (LLM)
 
 - Input: question + dataset schema
 - Output: strict JSON schema
 
-### B) Tool Narrowing (System)
+### B) Requirement Extraction Prompt (LLM)
+
+- Input: question + dataset schema
+- Output: strict JSON schema
+
+### C) Tool Narrowing (System)
 
 - Input: requirements
 - Output: tool subset
 
-### C) Plan Adaptation Prompt (LLM)
+### D) Plan Adaptation Prompt (LLM)
 
 - Input: requirements + tool subset + template
 - Output: JSON changes
 
-### D) Coverage Check (Deterministic + LLM Optional)
+### E) Coverage Check (Deterministic + LLM Optional)
 
 - If missing coverage, return a structured error and re-run adaptation.
+
+### Compatibility With Existing LLM Contracts (xgrammar2)
+
+This plan must preserve the current structured-output pipeline and prompt specs:
+- Prompts live in `templates/prompts/intent.md` and `templates/prompts/adapt_plan.md`.
+- JSON schemas for xgrammar2 live in `src/autoviz_agent/llm/llm_contracts.py`.
+- The vLLM client enforces grammar via `response_format` using those schemas.
+
+Any new LLM step (e.g., requirement extraction) must:
+- Add a prompt template under `templates/prompts/`.
+- Add a JSON schema contract in `src/autoviz_agent/llm/llm_contracts.py`.
+- Use JSON-only responses with `additionalProperties: false` to keep xgrammar2 strict.
+- Be wired through `PromptBuilder` and the vLLM client so the grammar path stays intact.
+
+Do not change existing intent/adaptation schemas or prompt fields in a way that breaks
+xgrammar2 validation.
 
 ## Template Strategy
 
@@ -196,3 +278,108 @@ Use a small test suite of questions to regression test extraction and planning.
 4) Update plan adaptation prompt to require requirement-to-step mapping.
 5) Implement coverage validator and retry loop.
 6) Add regression tests for intent extraction and plan adaptation.
+
+## Indexing and Embedding Implementation
+
+Recommended design:
+- Tool metadata is embedded once at startup and cached to disk.
+- Re-embed only when the tool registry changes (hash the registry file).
+- Use FAISS for local similarity search over tool metadata strings.
+- Store embeddings and metadata in a small local cache directory (e.g., `.cache/tool_index`).
+
+This keeps retrieval fast and deterministic while avoiding repeated embedding costs.
+
+## Example Walkthrough
+
+User question:
+\"get revenue totals by region and product type over time\"
+
+Dataset schema:
+- date (temporal), revenue (numeric), region (categorical), product_category (categorical)
+
+Note: The outputs below are conceptual. Actual LLM responses should be strict JSON per the prompt specs.
+
+### 1) Intent Classification and Template Selection
+
+Intent output:
+- primary: time_series_investigation
+- confidence: 0.90
+
+Template selected:
+- time_series_grouped
+
+### 2) Requirement Extraction Output
+
+```
+{
+  \"metrics\": [\"revenue\"],
+  \"group_by\": [\"region\", \"product_category\"],
+  \"time\": {\"column\": \"date\", \"grain\": \"unknown\"},
+  \"analysis\": [\"total\", \"compare\", \"trend\"],
+  \"outputs\": [\"chart\", \"table\"],
+  \"constraints\": []
+}
+```
+
+### 3) Tool Narrowing (Example Result)
+
+Template tools (time_series_grouped):
+- parse_datetime
+- aggregate
+- plot_line
+- compute_summary_stats
+
+Retrieved tools (top-N):
+- segment_metric
+- plot_bar
+
+Safety tools added:
+- aggregate (already present)
+- plot_line (already present)
+- compute_summary_stats (already present)
+
+Final tool subset (cap 8):
+- parse_datetime, aggregate, plot_line, compute_summary_stats, segment_metric, plot_bar
+
+### 4) Plan Adaptation (Changes)
+
+- Add aggregate step:
+  - tool: aggregate
+  - params: group_by=[\"date\", \"region\", \"product_category\"], agg_func=\"sum\", metrics=[\"revenue\"]
+  - satisfies: analysis.total, group_by, time
+
+- Modify plot_line step:
+  - tool: plot_line
+  - params: x=\"date\", y=\"revenue\", color=\"product_category\"
+  - satisfies: analysis.trend, outputs.chart
+
+- Add table output:
+  - tool: compute_summary_stats or save_dataframe
+  - satisfies: outputs.table
+
+- Remove detect_anomalies or plot_histogram if present:
+  - no matching requirement
+
+### 5) Coverage Check
+
+- analysis.total -> aggregate (OK)
+- analysis.compare -> aggregate + grouping (OK)
+- analysis.trend -> plot_line (OK)
+- outputs.chart -> plot_line (OK)
+- outputs.table -> summary_stats/save_dataframe (OK)
+- group_by -> aggregate with group_by (OK)
+- time -> parse_datetime + plot_line (OK)
+
+### 6) Execution
+
+- parse_datetime: casts date column
+- aggregate: computes revenue totals per date/region/product_category
+- plot_line: time series plot by product_category (optionally faceted by region)
+- summary_stats/save_dataframe: table output
+
+Result: plan includes only user-requested analysis steps and avoids anomaly/distribution extras.
+
+## Recommendations on Open Questions
+
+- Coverage check: deterministic mapping is best. LLM-assisted checks can be additive, but the deterministic map should be the gate.
+- Time grain inference: conservative in extraction, automatic in execution. This avoids overconfident grain guesses while still producing readable outputs.
