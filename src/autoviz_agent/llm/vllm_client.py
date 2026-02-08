@@ -1,6 +1,8 @@
 """vLLM client with OpenAI-compatible API and xgrammar2 support."""
 
 import json
+import math
+import re
 import requests
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -14,6 +16,7 @@ from autoviz_agent.llm.llm_contracts import (
     validate_intent_output,
     validate_adaptation_output,
 )
+from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
 
 logger = get_logger(__name__)
 
@@ -40,7 +43,14 @@ class VLLMClient:
         self.model_name = model_config.get("model_name", "unknown")
         self.temperature = model_config.get("temperature", 0.1)
         self.max_tokens = model_config.get("max_tokens", 512)
+        self.max_context_tokens = (
+            model_config.get("max_context_tokens")
+            or model_config.get("max_context_length")
+            or model_config.get("context_length")
+        )
         self.use_grammar = model_config.get("use_grammar", True)
+        self.last_prompt: Optional[str] = None
+        self.last_response: Optional[str] = None
         
         # Initialize prompt builder with optional template directory
         templates_dir = Path(__file__).parent.parent.parent.parent / "templates" / "prompts"
@@ -62,10 +72,11 @@ class VLLMClient:
             logger.warning("vLLM client will fail on inference. Make sure vLLM server is running.")
 
     def _generate(
-        self, 
-        prompt: str, 
+        self,
+        prompt: str,
         max_tokens: int = 512,
-        json_schema: Optional[Dict[str, Any]] = None
+        json_schema: Optional[Dict[str, Any]] = None,
+        _retry_on_validation: bool = True,
     ) -> str:
         """
         Generate text from prompt using vLLM server.
@@ -81,6 +92,8 @@ class VLLMClient:
         Raises:
             requests.exceptions.RequestException: If request fails
         """
+        max_tokens = self._cap_max_tokens(prompt, max_tokens)
+
         # Build request payload
         payload = {
             "model": self.model_name,
@@ -108,20 +121,29 @@ class VLLMClient:
             response = requests.post(
                 f"{self.base_url}/v1/chat/completions",
                 json=payload,
-                timeout=60
+                timeout=60,
             )
+            if response.status_code == 400 and _retry_on_validation:
+                capped = self._cap_max_tokens_from_response(response, max_tokens)
+                if capped != max_tokens:
+                    return self._generate(
+                        prompt,
+                        max_tokens=capped,
+                        json_schema=json_schema,
+                        _retry_on_validation=False,
+                    )
             response.raise_for_status()
-            
+
             # Parse response
             result = response.json()
             if "choices" not in result or len(result["choices"]) == 0:
                 raise ValueError("No choices in vLLM response")
-            
+
             content = result["choices"][0]["message"]["content"]
             logger.debug(f"vLLM response: {content[:200]}...")
-            
+
             return content
-            
+
         except requests.exceptions.Timeout:
             logger.error("vLLM request timed out")
             raise
@@ -131,6 +153,51 @@ class VLLMClient:
         except (KeyError, ValueError) as e:
             logger.error(f"Failed to parse vLLM response: {e}")
             raise
+
+    def _estimate_prompt_tokens(self, prompt: str) -> int:
+        # Heuristic for token estimation without tokenizer dependency.
+        return max(1, math.ceil(len(prompt) / 4) + 16)
+
+    def _cap_max_tokens(self, prompt: str, requested_tokens: int) -> int:
+        if not self.max_context_tokens:
+            return requested_tokens
+        prompt_tokens = self._estimate_prompt_tokens(prompt)
+        available = max(1, self.max_context_tokens - prompt_tokens)
+        if requested_tokens > available:
+            logger.warning(
+                "Capping max_tokens from %s to %s based on estimated prompt tokens (%s)",
+                requested_tokens,
+                available,
+                prompt_tokens,
+            )
+            return available
+        return requested_tokens
+
+    def _cap_max_tokens_from_response(
+        self, response: requests.Response, requested_tokens: int
+    ) -> int:
+        try:
+            payload = response.json()
+            message = payload.get("error", {}).get("message", "")
+        except ValueError:
+            message = response.text or ""
+        match = re.search(
+            r"maximum context length is (\d+) tokens.*?request has (\d+) input tokens",
+            message,
+        )
+        if not match:
+            return requested_tokens
+        max_context = int(match.group(1))
+        input_tokens = int(match.group(2))
+        available = max(1, max_context - input_tokens)
+        if requested_tokens > available:
+            logger.warning(
+                "Capping max_tokens from %s to %s based on vLLM validation error",
+                requested_tokens,
+                available,
+            )
+            return available
+        return requested_tokens
 
     def classify_intent(
         self, user_question: str, schema: SchemaProfile, max_intents: int = 3
@@ -148,12 +215,14 @@ class VLLMClient:
         """
         # Build prompt for intent classification using PromptBuilder
         prompt = self.prompt_builder.build_intent_prompt(user_question, schema)
+        self.last_prompt = prompt
         
         # Get JSON schema for grammar constraint
         intent_schema = get_intent_schema()
         
         logger.info("Classifying user intent with vLLM")
         response = self._generate(prompt, max_tokens=200, json_schema=intent_schema)
+        self.last_response = response
         
         # Parse and validate response
         try:
@@ -204,12 +273,14 @@ class VLLMClient:
         """
         # Build prompt for plan adaptation using PromptBuilder
         prompt = self.prompt_builder.build_adaptation_prompt(template_plan, schema, intent, user_question)
+        self.last_prompt = prompt
         
         # Get JSON schema for grammar constraint
         adaptation_schema = get_adaptation_schema()
         
         logger.info("Adapting plan template with vLLM")
         response = self._generate(prompt, max_tokens=400, json_schema=adaptation_schema)
+        self.last_response = response
         
         # Parse and validate response
         try:
@@ -243,17 +314,8 @@ class VLLMClient:
         adapted = copy.deepcopy(template)
         
         # Valid tool names for validation
-        valid_tools = [
-            "load_dataset", "sample_rows", "save_dataframe",
-            "infer_schema",
-            "handle_missing", "parse_datetime", "cast_types", "normalize_column_names",
-            "compute_summary_stats", "compute_correlations", "compute_value_counts", 
-            "compute_percentiles", "aggregate",
-            "detect_anomalies", "segment_metric", "compute_distributions", 
-            "compare_groups", "compute_time_series_features",
-            "plot_line", "plot_bar", "plot_scatter", "plot_histogram", 
-            "plot_heatmap", "plot_boxplot"
-        ]
+        ensure_default_tools_registered()
+        valid_tools = set(TOOL_REGISTRY.list_tools())
         
         for change in changes:
             action = change.get("action")
@@ -301,7 +363,12 @@ class VLLMClient:
         return adapted
 
     def generate_tool_calls(
-        self, plan: Dict[str, Any], schema: SchemaProfile, artifact_manager=None, user_question: str = ""
+        self,
+        plan: Dict[str, Any],
+        schema: SchemaProfile,
+        artifact_manager=None,
+        user_question: str = "",
+        execution_log=None,
     ) -> List[Dict[str, Any]]:
         """
         Generate tool calls from plan, using ParamResolver for parameter defaults.
@@ -339,24 +406,37 @@ class VLLMClient:
                 "description": step.get("description", ""),
             }
             
-            # Validate tool call - strict mode with repair
-            validation_result = validate_tool_call(tool_call)
-            if not validation_result.is_valid:
-                logger.warning(
-                    f"Tool call validation failed for {tool_name}: {validation_result.errors}"
+            repaired_call = repair_tool_call(tool_call, schema_profile=schema)
+            if execution_log and repaired_call.get("args") != tool_call.get("args"):
+                original_args = tool_call.get("args", {})
+                new_args = repaired_call.get("args", {})
+                removed = sorted([k for k in original_args.keys() if k not in new_args])
+                added = {k: new_args[k] for k in new_args.keys() if k not in original_args}
+                changed = {
+                    k: {"from": original_args[k], "to": new_args[k]}
+                    for k in original_args.keys()
+                    if k in new_args and original_args[k] != new_args[k]
+                }
+                details = {
+                    "removed_params": removed,
+                    "added_params": added,
+                    "changed_params": changed,
+                }
+                execution_log.add_repair_attempt(
+                    tool_name,
+                    strategy="tool_call_repair",
+                    success=True,
+                    details=details,
                 )
-                # Attempt repair
-                repaired_call = repair_tool_call(tool_call)
-                validation_result = validate_tool_call(repaired_call)
-                
-                if validation_result.is_valid:
+
+            validation_result = validate_tool_call(repaired_call)
+            if validation_result.is_valid:
+                if repaired_call.get("args") != tool_call.get("args"):
                     logger.info(f"Successfully repaired tool call: {tool_name}")
-                    tool_calls.append(repaired_call)
-                else:
-                    logger.error(f"Cannot repair tool call for {tool_name}, dropping it")
-                    dropped_calls.append({"tool": tool_name, "errors": validation_result.errors})
+                tool_calls.append(repaired_call)
             else:
-                tool_calls.append(tool_call)
+                logger.error(f"Cannot repair tool call for {tool_name}, dropping it")
+                dropped_calls.append({"tool": tool_name, "errors": validation_result.errors})
         
         if dropped_calls:
             logger.warning(f"Dropped {len(dropped_calls)} invalid tool calls: {[d['tool'] for d in dropped_calls]}")

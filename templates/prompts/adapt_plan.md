@@ -22,13 +22,7 @@ Current steps:
 
 ## Available Tools (use EXACT names)
 
-- **aggregate**: Group data and compute aggregations (use for "compare by", "group by")
-- **segment_metric**: Segment metric by category
-- **detect_anomalies**: Detect outliers or unusual values
-- **compute_summary_stats**: Basic statistics (mean, std, etc.)
-- **compute_correlations**: Correlation matrix
-- **compute_distributions**: Distribution analysis
-- **plot_line**, **plot_bar**, **plot_scatter**, **plot_histogram**, **plot_heatmap**, **plot_boxplot**
+{tool_catalog}
 
 ## Your Task
 
@@ -38,10 +32,10 @@ Current steps:
 
 ## Examples
 
-- User asks "find outliers" → add step with tool="detect_anomalies"
-- User asks "compare revenue by region" → add step with tool="aggregate", params={{"group_by": ["region"], "agg_func": "sum"}}
-- User asks "compare by region and product" → add step with tool="aggregate", params={{"group_by": ["region", "product_category"], "agg_func": "sum"}}
-- Template fits perfectly → return empty changes array
+- User asks "find outliers" -> add step with tool="detect_anomalies"
+- User asks "compare revenue by region" -> add step with tool="aggregate", params={{"group_by": ["region"], "agg_func": "sum"}}
+- User asks "compare by region and product" -> add step with tool="aggregate", params={{"group_by": ["region", "product_category"], "agg_func": "sum"}}
+- Template fits perfectly -> return empty changes array
 
 ## Response Format
 

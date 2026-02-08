@@ -7,6 +7,8 @@ from typing import Any, Dict, List, Optional
 from autoviz_agent.models.state import Intent, IntentLabel, SchemaProfile
 from autoviz_agent.utils.logging import get_logger
 from autoviz_agent.llm.prompts import PromptBuilder
+from autoviz_agent.registry.intents import classify_intent_by_keywords
+from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
 
 logger = get_logger(__name__)
 
@@ -24,6 +26,8 @@ class LLMClient:
         self.model_config = model_config
         self.model_path = Path(model_config.get("path", ""))
         self._llm = None
+        self.last_prompt: Optional[str] = None
+        self.last_response: Optional[str] = None
         
         # Initialize prompt builder with optional template directory
         templates_dir = Path(__file__).parent.parent.parent.parent / "templates" / "prompts"
@@ -121,14 +125,14 @@ class LLMClient:
             else:
                 question_part = prompt_lower
                 
-            if any(word in question_part for word in ["time", "trend", "temporal", "series", "over time"]):
-                return '{"primary": "time_series_investigation", "secondary": ["general_eda"], "confidence": 0.7, "reasoning": "Time-based keywords detected"}'
-            elif any(word in question_part for word in ["anomaly", "outlier", "unusual"]):
-                return '{"primary": "anomaly_detection", "secondary": ["general_eda"], "confidence": 0.7, "reasoning": "Anomaly keywords detected"}'
-            elif any(word in question_part for word in ["segment", "group", "compare", "difference"]):
-                return '{"primary": "comparative_analysis", "secondary": ["segmentation_drivers"], "confidence": 0.7, "reasoning": "Comparison keywords detected"}'
-            else:
-                return '{"primary": "general_eda", "secondary": [], "confidence": 0.6, "reasoning": "General exploration"}'
+            primary = classify_intent_by_keywords(question_part, exposed_only=True)
+            return json.dumps(
+                {
+                    "primary": primary,
+                    "confidence": 0.7 if primary != "general_eda" else 0.6,
+                    "reasoning": "Keyword-based fallback classification",
+                }
+            )
         
         # Plan adaptation fallback - return minimal changes
         if "adapt" in prompt_lower or "modify" in prompt_lower:
@@ -152,9 +156,11 @@ class LLMClient:
         """
         # Build prompt for intent classification using PromptBuilder
         prompt = self.prompt_builder.build_intent_prompt(user_question, schema)
+        self.last_prompt = prompt
         
         logger.info("Classifying user intent")
         response = self._generate(prompt, max_tokens=200, stop=["\n\n"])
+        self.last_response = response
         
         # Parse response
         try:
@@ -201,9 +207,11 @@ class LLMClient:
         """
         # Build prompt for plan adaptation using PromptBuilder
         prompt = self.prompt_builder.build_adaptation_prompt(template_plan, schema, intent, user_question)
+        self.last_prompt = prompt
         
         logger.info("Adapting plan template")
         response = self._generate(prompt, max_tokens=400, stop=["Here are", "Here is", "\n\nHere", "Additional"])
+        self.last_response = response
         
         # Debug: log LLM response
         logger.debug(f"LLM adaptation response: {response[:200]}...")
@@ -233,17 +241,8 @@ class LLMClient:
         adapted = copy.deepcopy(template)
         
         # Valid tool names for validation
-        valid_tools = [
-            "load_dataset", "sample_rows", "save_dataframe",
-            "infer_schema",
-            "handle_missing", "parse_datetime", "cast_types", "normalize_column_names",
-            "compute_summary_stats", "compute_correlations", "compute_value_counts", 
-            "compute_percentiles", "aggregate",
-            "detect_anomalies", "segment_metric", "compute_distributions", 
-            "compare_groups", "compute_time_series_features",
-            "plot_line", "plot_bar", "plot_scatter", "plot_histogram", 
-            "plot_heatmap", "plot_boxplot"
-        ]
+        ensure_default_tools_registered()
+        valid_tools = set(TOOL_REGISTRY.list_tools())
         
         for change in changes:
             action = change.get("action")
@@ -291,7 +290,12 @@ class LLMClient:
         return adapted
 
     def generate_tool_calls(
-        self, plan: Dict[str, Any], schema: SchemaProfile, artifact_manager=None, user_question: str = ""
+        self,
+        plan: Dict[str, Any],
+        schema: SchemaProfile,
+        artifact_manager=None,
+        user_question: str = "",
+        execution_log=None,
     ) -> List[Dict[str, Any]]:
         """
         Generate tool calls from plan, using ParamResolver for parameter defaults.
@@ -329,24 +333,37 @@ class LLMClient:
                 "description": step.get("description", ""),
             }
             
-            # Validate tool call - strict mode with repair
-            validation_result = validate_tool_call(tool_call)
-            if not validation_result.is_valid:
-                logger.warning(
-                    f"Tool call validation failed for {tool_name}: {validation_result.errors}"
+            repaired_call = repair_tool_call(tool_call, schema_profile=schema)
+            if execution_log and repaired_call.get("args") != tool_call.get("args"):
+                original_args = tool_call.get("args", {})
+                new_args = repaired_call.get("args", {})
+                removed = sorted([k for k in original_args.keys() if k not in new_args])
+                added = {k: new_args[k] for k in new_args.keys() if k not in original_args}
+                changed = {
+                    k: {"from": original_args[k], "to": new_args[k]}
+                    for k in original_args.keys()
+                    if k in new_args and original_args[k] != new_args[k]
+                }
+                details = {
+                    "removed_params": removed,
+                    "added_params": added,
+                    "changed_params": changed,
+                }
+                execution_log.add_repair_attempt(
+                    tool_name,
+                    strategy="tool_call_repair",
+                    success=True,
+                    details=details,
                 )
-                # Attempt repair
-                repaired_call = repair_tool_call(tool_call)
-                validation_result = validate_tool_call(repaired_call)
-                
-                if validation_result.is_valid:
+
+            validation_result = validate_tool_call(repaired_call)
+            if validation_result.is_valid:
+                if repaired_call.get("args") != tool_call.get("args"):
                     logger.info(f"Successfully repaired tool call: {tool_name}")
-                    tool_calls.append(repaired_call)
-                else:
-                    logger.error(f"Cannot repair tool call for {tool_name}, dropping it")
-                    dropped_calls.append({"tool": tool_name, "errors": validation_result.errors})
+                tool_calls.append(repaired_call)
             else:
-                tool_calls.append(tool_call)
+                logger.error(f"Cannot repair tool call for {tool_name}, dropping it")
+                dropped_calls.append({"tool": tool_name, "errors": validation_result.errors})
         
         if dropped_calls:
             logger.warning(f"Dropped {len(dropped_calls)} invalid tool calls: {[d['tool'] for d in dropped_calls]}")

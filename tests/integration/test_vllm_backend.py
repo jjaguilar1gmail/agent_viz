@@ -311,7 +311,7 @@ if __name__ == "__main__":
         print("=" * 70)
         print("\n[SUCCESS] vLLM backend implementation is ready!")
         print("\nNext steps:")
-        print("1. Set up WSL2 with vLLM server (see VLLM_WSL2_STRATEGY.md)")
+        print("1. Set up WSL2 with vLLM server (see docs/VLLM_WSL2_STRATEGY.md)")
         print("2. Start vLLM server: vllm serve <model> --host 0.0.0.0 --port 8000")
         print("3. Update default_model in config.yaml to use vLLM backend")
         print("4. Run: autoviz run <dataset> <question>\n")

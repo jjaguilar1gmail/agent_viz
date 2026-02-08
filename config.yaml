@@ -1,7 +1,7 @@
 # AutoViz Agent Configuration
 
 # Default model to use
-default_model: "qwen-1.5b-vllm"  # Change from "phi-3.5-mini"
+default_model: "qwen-1.5b-vllm"  # Using vLLM with Qwen 1.5B (GPU accelerated)
 
 # Model definitions
 models:
@@ -85,7 +85,7 @@ models:
     url: "http://localhost:8000"
     model_name: "/home/effguilar/models/qwen-1.5b-4bit"  # Model identifier from server
     temperature: 0.1
-    max_tokens: 1024  # Model's max context
+    max_tokens: 256  # Reduced to fit in 1024 context window
     use_grammar: true  # Enable xgrammar2 for structured outputs
 
 # Backend-specific settings

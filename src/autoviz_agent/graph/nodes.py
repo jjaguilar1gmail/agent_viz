@@ -128,6 +128,29 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
             },
             "node": "classify_intent"
         })
+        state.llm_requests.append({
+            "step": "intent_classification",
+            "prompt": getattr(llm_client, "last_prompt", None),
+            "response": getattr(llm_client, "last_response", None),
+            "node": "classify_intent",
+        })
+        state.artifact_manager.save_json(
+            state.llm_requests,
+            "llm_requests",
+            "llm_requests.json",
+        )
+        if state.llm_requests[-1].get("prompt"):
+            state.artifact_manager.save_text(
+                state.llm_requests[-1]["prompt"],
+                "llm_requests",
+                "llm_intent_prompt.txt",
+            )
+        if state.llm_requests[-1].get("response"):
+            state.artifact_manager.save_text(
+                state.llm_requests[-1]["response"],
+                "llm_requests",
+                "llm_intent_response.txt",
+            )
         
         logger.info(f"Intent: {intent.label} (confidence={intent.confidence:.2f})")
         print(f"\n[Intent] Classified as '{intent.label.value}'")
@@ -137,6 +160,7 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
             "llm_client": llm_client,
             "intent": intent,
             "llm_interactions": state.llm_interactions,
+            "llm_requests": state.llm_requests,
         }
     except Exception as e:
         logger.error(f"Intent classification failed: {e}")
@@ -222,6 +246,29 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
             },
             "node": "adapt_plan"
         })
+        state.llm_requests.append({
+            "step": "plan_adaptation",
+            "prompt": getattr(state.llm_client, "last_prompt", None),
+            "response": getattr(state.llm_client, "last_response", None),
+            "node": "adapt_plan",
+        })
+        state.artifact_manager.save_json(
+            state.llm_requests,
+            "llm_requests",
+            "llm_requests.json",
+        )
+        if state.llm_requests[-1].get("prompt"):
+            state.artifact_manager.save_text(
+                state.llm_requests[-1]["prompt"],
+                "llm_requests",
+                "llm_adapt_prompt.txt",
+            )
+        if state.llm_requests[-1].get("response"):
+            state.artifact_manager.save_text(
+                state.llm_requests[-1]["response"],
+                "llm_requests",
+                "llm_adapt_response.txt",
+            )
         
         # Save adapted plan
         adapted_path = state.artifact_manager.save_json(adapted_plan, "plan_adapted", "plan_adapted.json")
@@ -248,6 +295,7 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
             "current_node": "adapt_plan",
             "adapted_plan": adapted_plan,
             "llm_interactions": state.llm_interactions,
+            "llm_requests": state.llm_requests,
         }
     except Exception as e:
         logger.error(f"Plan adaptation failed: {e}")
@@ -273,7 +321,8 @@ def compile_tool_calls_node(state: GraphState) -> Dict[str, Any]:
             state.adapted_plan, 
             state.schema,
             state.artifact_manager,
-            state.question  # Pass user question for column extraction
+            state.question,  # Pass user question for column extraction
+            execution_log=state.execution_log,
         )
         state.tool_calls = tool_calls
         
@@ -383,11 +432,51 @@ def summarize_node(state: GraphState) -> Dict[str, Any]:
         # Add LLM interactions section
         if state.llm_interactions:
             report.add_llm_interactions_section(state.llm_interactions)
+        if not state.llm_requests and state.artifact_manager:
+            try:
+                state.llm_requests = state.artifact_manager.load_json(
+                    "llm_requests",
+                    "llm_requests.json",
+                )
+            except Exception as e:
+                logger.debug(f"Failed to load llm_requests.json: {e}")
+        if state.llm_requests:
+            report.add_llm_request_details(state.llm_requests)
         
+        # Add key metrics section
+        if state.execution_results:
+            report.add_key_metrics_section(state.execution_results)
+
         # Add charts section
         if state.execution_results:
             report.add_charts_section(state.execution_results)
         
+        repair_entries = []
+        if state.execution_log:
+            for entry in state.execution_log.entries:
+                result = entry.result or {}
+                if result.get("repair_attempt"):
+                    details = result.get("details", {})
+                    removed = details.get("removed_params") or []
+                    added = details.get("added_params") or {}
+                    changed = details.get("changed_params") or {}
+                    summary = [f"tool={entry.tool}"]
+                    if removed:
+                        summary.append(f"removed={', '.join(removed)}")
+                    if added:
+                        summary.append(f"added={', '.join(added.keys())}")
+                    if changed:
+                        summary.append(f"changed={', '.join(changed.keys())}")
+                    repair_entries.append(", ".join(summary))
+
+        if repair_entries:
+            report.add_header("Repairs and Validation", level=2)
+            report.add_text(
+                "Some tool calls required repairs due to invalid parameters or "
+                "column name mismatches."
+            )
+            report.add_list(repair_entries)
+
         # Add provenance section
         report.add_header("Plan Provenance", level=2)
         report.add_text(f"**Template**: {state.template_plan.get('template_id')}")

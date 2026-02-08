@@ -7,22 +7,22 @@ This module defines JSON schemas that can be used for:
 """
 
 from typing import Any, Dict, List, Literal
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
+
+from autoviz_agent.registry.intents import get_intent_labels
 
 
 # =============================================================================
 # Intent Classification Contracts
 # =============================================================================
 
+INTENT_LABELS = get_intent_labels(exposed_only=True)
+
+
 class IntentOutput(BaseModel):
     """Intent classification output contract."""
-    
-    primary: Literal[
-        "general_eda",
-        "time_series_investigation", 
-        "anomaly_detection",
-        "comparative_analysis"
-    ] = Field(..., description="Primary intent label")
+
+    primary: str = Field(..., description="Primary intent label")
     
     confidence: float = Field(
         ..., 
@@ -35,6 +35,13 @@ class IntentOutput(BaseModel):
         ...,
         description="Brief explanation of why this intent was chosen"
     )
+
+    @field_validator("primary")
+    @classmethod
+    def validate_primary(cls, value: str) -> str:
+        if value not in INTENT_LABELS:
+            raise ValueError(f"Unknown intent label: {value}")
+        return value
 
 
 # =============================================================================
@@ -102,12 +109,7 @@ def get_intent_schema() -> Dict[str, Any]:
         "properties": {
             "primary": {
                 "type": "string",
-                "enum": [
-                    "general_eda",
-                    "time_series_investigation",
-                    "anomaly_detection",
-                    "comparative_analysis"
-                ],
+                "enum": INTENT_LABELS,
                 "description": "Primary intent label"
             },
             "confidence": {

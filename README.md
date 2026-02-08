@@ -116,7 +116,7 @@ Tool calls are validated against registered schemas before execution. The regist
 
 **Parameter Resolution**: Missing parameters are automatically filled using `ParamResolver`, which uses dataset schema to select appropriate columns and generate output paths.
 
-For more details, see [TOOL_CALLING.md](TOOL_CALLING.md).
+For more details, see [docs/TOOL_CALLING.md](docs/TOOL_CALLING.md).
 
 ### Configuration
 

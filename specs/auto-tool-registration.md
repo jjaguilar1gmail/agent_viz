@@ -3,7 +3,7 @@
 **Status**: Proposed  
 **Priority**: Medium  
 **Effort**: Small (~2-4 hours)  
-**Related**: [Tool Registration Status](../TOOL_REGISTRATION_STATUS.md)
+**Related**: [Tool Registration Status](../docs/TOOL_REGISTRATION_STATUS.md)
 
 ## Problem Statement
 

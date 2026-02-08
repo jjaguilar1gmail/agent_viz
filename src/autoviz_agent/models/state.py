@@ -6,15 +6,16 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field
 
+from autoviz_agent.registry.intents import get_intent_labels
 
-class IntentLabel(str, Enum):
-    """Intent classification labels."""
 
-    GENERAL_EDA = "general_eda"
-    TIME_SERIES_INVESTIGATION = "time_series_investigation"
-    SEGMENTATION_DRIVERS = "segmentation_drivers"
-    ANOMALY_DETECTION = "anomaly_detection"
-    COMPARATIVE_ANALYSIS = "comparative_analysis"
+def _build_intent_label() -> Enum:
+    labels = get_intent_labels(exposed_only=False)
+    return Enum("IntentLabel", {label.upper(): label for label in labels}, type=str)
+
+
+IntentLabel = _build_intent_label()
+IntentLabel.__doc__ = "Intent classification labels."
 
 
 class RunStatus(str, Enum):
