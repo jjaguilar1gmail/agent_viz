@@ -95,6 +95,12 @@ Each planned step must declare which requirement(s) it satisfies.
 - Enforce label validation: if extraction emits labels outside the allowed set, block and re-run extraction.
 - Keep a minimal core capability set to avoid total failure when the registry is incomplete.
 
+#### Registry Enforcement
+
+- Add a unit test that fails if a requirement label appears without a mapping entry.
+- Add a unit test that fails if a tool capability is not listed in the registry schema.
+- Run these tests in CI to prevent silent mapping gaps.
+
 ## 3) Tool Metadata and Catalog
 
 Every tool has compact metadata in a registry file (YAML or JSON).
@@ -121,6 +127,21 @@ Embedding note:
 - Precompute and embed a compact tool document that includes name + description + capabilities + key params + outputs.
 - At runtime, only embed the query derived from requirements (not the tools).
 - Compare query embeddings against the precomputed tool embeddings in FAISS.
+
+Tool document format (deterministic):
+```
+tool: {name}
+desc: {description}
+capabilities: {capabilities}
+params: {params}
+outputs: {outputs}
+```
+
+Generate this directly from the registry to avoid drift between metadata and embeddings.
+
+Source of truth:
+- Tool metadata must be sourced from the runtime tool registry (the same definitions used for validation and execution).
+- The narrowed tool list shown to the LLM should be derived directly from that registry, not a separate static list.
 
 ## 4) Tool Narrowing Strategy
 
@@ -163,6 +184,7 @@ Recommendation: infer time grain during extraction with a closed enum, but only 
 If grain is unknown, defer to execution with an auto-grain policy based on data span and density.
 
 Example policy:
+- If missing dates or irregular intervals exceed 20%, prefer weekly.
 - < 90 days span or > 60 points: daily
 - 90-365 days: weekly
 - > 365 days: monthly
@@ -196,6 +218,10 @@ Repair policy:
 - Safe repairs (missing df, column name casing, default params) are allowed with explicit logging.
 - Semantic repairs (changing group_by, metric, or time grain) should fail fast and trigger re-planning.
 - Any repair that changes analysis intent must be rejected.
+
+Alignment note:
+- Current repair logic should be reviewed to ensure it does not silently alter semantic intent.
+- If an existing repair is semantic, convert it to a re-plan trigger instead of auto-fixing.
 
 ## Prompt Set (Minimal)
 
@@ -238,6 +264,15 @@ Any new LLM step (e.g., requirement extraction) must:
 
 Do not change existing intent/adaptation schemas or prompt fields in a way that breaks
 xgrammar2 validation.
+
+### New Requirement Extraction Prompt Spec (Required)
+
+Add a dedicated prompt template and schema for the requirement extraction step:
+- Prompt template: `templates/prompts/requirements.md`
+- JSON schema: `RequirementExtractionOutput` in `src/autoviz_agent/llm/llm_contracts.py`
+- Wire through `PromptBuilder` and the vLLM client with xgrammar2 `response_format`.
+
+This prevents introducing a new LLM step without strict JSON validation.
 
 ## Template Strategy
 
@@ -383,3 +418,18 @@ Result: plan includes only user-requested analysis steps and avoids anomaly/dist
 
 - Coverage check: deterministic mapping is best. LLM-assisted checks can be additive, but the deterministic map should be the gate.
 - Time grain inference: conservative in extraction, automatic in execution. This avoids overconfident grain guesses while still producing readable outputs.
+
+## High-Level Weaknesses and Mitigations
+
+- Schema dependence: if requirement extraction is wrong, every downstream step is aligned to the wrong contract.
+  Mitigation: add a re-extraction retry with explicit label constraints, and maintain a small regression suite of questions to detect drift.
+- Mapping maintenance: deterministic requirement-to-capability mappings can silently fall out of sync as new labels or tools are added.
+  Mitigation: gate merges on registry/mapping consistency tests and enforce a required mapping entry for any new label.
+- Retrieval brittleness: weak tool descriptions or sparse metadata can cause retrieval to miss the best tool and bias the plan.
+  Mitigation: enforce minimum description quality, and embed a richer tool document that includes capabilities and params.
+- Template lock-in: a wrong intent selection can bias the plan even if the requirements are correct.
+  Mitigation: allow intent override if coverage check fails or if requirements contradict the template’s assumptions.
+- Repair semantics gap: runtime repairs can mask plan mistakes if semantic changes are auto-applied.
+  Mitigation: classify repairs as safe vs semantic and force semantic repairs to trigger re-planning.
+- Operational complexity: embeddings, caches, and prompt/schema updates add moving parts that can drift.
+  Mitigation: add CI checks for index cache freshness and prompt/schema parity, and log registry hash changes.
