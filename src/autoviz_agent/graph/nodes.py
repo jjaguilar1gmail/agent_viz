@@ -11,7 +11,7 @@ from autoviz_agent.io.artifacts import ArtifactManager
 from autoviz_agent.llm.factory import create_llm_client
 from autoviz_agent.models.state import Intent, RunStatus, SchemaProfile
 from autoviz_agent.planning.diff import generate_diff
-from autoviz_agent.planning.retrieval import PlanRetrieval
+from autoviz_agent.planning.retrieval import PlanRetrieval, get_tool_retriever
 from autoviz_agent.planning.template_loader import TemplateLoader
 from autoviz_agent.reporting.execution_log import ExecutionLog
 from autoviz_agent.reporting.report_writer import ReportWriter
@@ -167,6 +167,76 @@ def classify_intent_node(state: GraphState) -> Dict[str, Any]:
         return {"current_node": "error", "error_message": str(e)}
 
 
+def extract_requirements_node(state: GraphState) -> Dict[str, Any]:
+    """
+    Extract structured requirements from user question.
+
+    Args:
+        state: Current graph state
+
+    Returns:
+        Updated state with requirements
+    """
+    logger.info("Extracting requirements from user question")
+    state.current_node = "extract_requirements"
+    
+    try:
+        # Extract requirements using LLM
+        requirements = state.llm_client.extract_requirements(
+            state.question,
+            state.schema,
+        )
+        state.requirements = requirements
+        
+        # Track LLM interaction
+        state.llm_interactions.append({
+            "step": "requirement_extraction",
+            "input": state.question,
+            "output": {
+                "metrics": requirements.metrics,
+                "group_by": requirements.group_by,
+                "analysis": requirements.analysis,
+            },
+            "node": "extract_requirements"
+        })
+        state.llm_requests.append({
+            "step": "requirement_extraction",
+            "prompt": getattr(state.llm_client, "last_prompt", None),
+            "response": getattr(state.llm_client, "last_response", None),
+            "node": "extract_requirements",
+        })
+        
+        # Save requirements
+        state.artifact_manager.save_json(
+            requirements.dict(),
+            "requirements",
+            "requirements.json",
+        )
+        
+        logger.info(f"Requirements extracted: metrics={requirements.metrics}, "
+                   f"analysis={requirements.analysis}")
+        print(f"\n[Requirements] Extracted structured requirements")
+        if requirements.metrics:
+            print(f"               Metrics: {', '.join(requirements.metrics)}")
+        if requirements.analysis:
+            print(f"               Analysis: {', '.join(requirements.analysis)}")
+        
+        return {
+            "current_node": "extract_requirements",
+            "requirements": requirements,
+            "llm_interactions": state.llm_interactions,
+            "llm_requests": state.llm_requests,
+        }
+    except Exception as e:
+        logger.warning(f"Requirement extraction failed: {e}. Continuing with empty requirements.")
+        # Don't fail the entire pipeline, just continue with empty requirements
+        from autoviz_agent.llm.llm_contracts import RequirementExtractionOutput
+        return {
+            "current_node": "extract_requirements",
+            "requirements": RequirementExtractionOutput(),
+        }
+
+
 def select_template_node(state: GraphState) -> Dict[str, Any]:
     """
     Select plan template based on intent and schema.
@@ -194,6 +264,26 @@ def select_template_node(state: GraphState) -> Dict[str, Any]:
         selected_template = templates[selected_template_id]
         state.template_plan = selected_template
         
+        # Narrow tools using requirements
+        template_tools = selected_template.get("curated_tools", [])
+        if state.requirements:
+            try:
+                retriever = get_tool_retriever()
+                narrowed_tools = retriever.retrieve_tools(
+                    state.requirements,
+                    template_tools,
+                    top_k=5,
+                    cap=12
+                )
+                state.narrowed_tools = narrowed_tools
+                logger.info(f"Narrowed to {len(narrowed_tools)} tools")
+            except Exception as e:
+                logger.warning(f"Tool narrowing failed: {e}. Using template tools only.")
+                state.narrowed_tools = template_tools
+        else:
+            # No requirements, use template tools
+            state.narrowed_tools = template_tools
+        
         # Save template to artifacts
         template_path = state.artifact_manager.save_json(
             selected_template, "plan_template", "plan_template.json"
@@ -207,6 +297,7 @@ def select_template_node(state: GraphState) -> Dict[str, Any]:
         return {
             "current_node": "select_template",
             "template_plan": selected_template,
+            "narrowed_tools": state.narrowed_tools,
         }
     except Exception as e:
         logger.error(f"Template selection failed: {e}")

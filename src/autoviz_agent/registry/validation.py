@@ -3,6 +3,7 @@
 import re
 from difflib import SequenceMatcher
 from typing import Any, Dict, List, Optional, Tuple
+from enum import Enum
 
 from pydantic import ValidationError
 
@@ -15,6 +16,75 @@ logger = get_logger(__name__)
 
 _COLUMN_SIMILARITY_THRESHOLD = 0.7
 _COLUMN_SIMILARITY_MARGIN = 0.05
+
+
+# =============================================================================
+# Repair Classification
+# =============================================================================
+
+class RepairType(Enum):
+    """Classification of repair types."""
+    SAFE = "safe"  # Safe to auto-apply (missing df, column casing, defaults)
+    SEMANTIC = "semantic"  # Changes analysis intent (group_by, metric, time grain)
+
+
+# Semantic parameters that should not be auto-repaired
+SEMANTIC_PARAMETERS = {
+    "group_by",
+    "agg_func",
+    "agg_map",
+    "metrics",
+    "x",
+    "y",
+    "column",
+    "columns",
+    "time_column",
+    "grain",
+}
+
+
+def classify_repair(
+    parameter_name: str,
+    old_value: Any,
+    new_value: Any,
+    tool_name: str,
+) -> RepairType:
+    """
+    Classify a repair as safe or semantic.
+    
+    Args:
+        parameter_name: Name of the parameter being repaired
+        old_value: Original value
+        new_value: Repaired value
+        tool_name: Tool being repaired
+    
+    Returns:
+        RepairType classification
+    """
+    # Missing df is always safe
+    if parameter_name == "df" and old_value is None:
+        return RepairType.SAFE
+    
+    # Default values for missing parameters are safe
+    if old_value is None and new_value in ["auto", 0, False, [], {}, "$dataframe"]:
+        return RepairType.SAFE
+    
+    # Column name casing fixes are safe
+    if isinstance(old_value, str) and isinstance(new_value, str):
+        if old_value.lower() == new_value.lower():
+            return RepairType.SAFE
+    
+    # Semantic parameters changing non-None values are semantic
+    if parameter_name in SEMANTIC_PARAMETERS and old_value is not None:
+        return RepairType.SEMANTIC
+    
+    # Changes to aggregation or grouping parameters are semantic
+    if "agg" in parameter_name.lower() or "group" in parameter_name.lower():
+        if old_value is not None and old_value != new_value:
+            return RepairType.SEMANTIC
+    
+    # Default to safe for other cases
+    return RepairType.SAFE
 
 
 def _normalize_column_name(name: str) -> str:

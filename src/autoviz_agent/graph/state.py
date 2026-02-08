@@ -49,6 +49,8 @@ class GraphState(BaseModel):
     # Processing state
     schema: Optional[Any] = Field(None, description="Inferred schema")
     intent: Optional[Any] = Field(None, description="Classified intent")
+    requirements: Optional[Any] = Field(None, description="Extracted requirements")
+    narrowed_tools: Optional[list[str]] = Field(None, description="Narrowed tool list")
     template_plan: Optional[Dict[str, Any]] = Field(None, description="Template plan")
     adapted_plan: Optional[Dict[str, Any]] = Field(None, description="Adapted plan")
     tool_calls: list[Dict[str, Any]] = Field(default_factory=list, description="Tool calls")

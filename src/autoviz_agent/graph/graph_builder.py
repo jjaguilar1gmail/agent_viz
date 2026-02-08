@@ -11,6 +11,7 @@ from autoviz_agent.graph.nodes import (
     complete_node,
     error_node,
     execute_tools_node,
+    extract_requirements_node,
     infer_schema_node,
     initialize_node,
     repair_or_clarify_node,
@@ -54,6 +55,7 @@ def build_graph() -> StateGraph:
     workflow.add_node("initialize", initialize_node)
     workflow.add_node("infer_schema", infer_schema_node)
     workflow.add_node("classify_intent", classify_intent_node)
+    workflow.add_node("extract_requirements", extract_requirements_node)
     workflow.add_node("select_template", select_template_node)
     workflow.add_node("adapt_plan", adapt_plan_node)
     workflow.add_node("compile_tool_calls", compile_tool_calls_node)
@@ -79,6 +81,11 @@ def build_graph() -> StateGraph:
     )
     workflow.add_conditional_edges(
         "classify_intent",
+        should_continue,
+        {"continue": "extract_requirements", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "extract_requirements",
         should_continue,
         {"continue": "select_template", "error": "error"}
     )
