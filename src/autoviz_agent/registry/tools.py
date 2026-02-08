@@ -25,6 +25,10 @@ class ToolSchema(BaseModel):
     parameters: List[ToolParameter] = Field(default_factory=list, description="Tool parameters")
     returns: str = Field(..., description="Return type description")
     version: str = Field(default="1.0.0", description="Tool version")
+    capabilities: List[str] = Field(
+        default_factory=list, 
+        description="Tool capabilities (e.g., aggregate, plot, time_series)"
+    )
 
 
 class ToolRegistry:
@@ -128,6 +132,34 @@ class ToolRegistry:
         
         return {"tools": tools_json}
 
+    def get_tool_documents(self) -> Dict[str, str]:
+        """
+        Generate deterministic tool documents for embedding.
+        
+        Each document contains: name, description, capabilities, key params, and outputs.
+        This format is the source of truth for tool retrieval.
+        
+        Returns:
+            Dictionary mapping tool name to formatted document string
+        """
+        documents = {}
+        for name, schema in self._schemas.items():
+            # Build param list (limit to key params)
+            param_names = [p.name for p in schema.parameters[:5]]  # Top 5 params
+            if len(schema.parameters) > 5:
+                param_names.append("...")
+            
+            # Format document
+            doc = f"""tool: {schema.name}
+desc: {schema.description}
+capabilities: {', '.join(schema.capabilities) if schema.capabilities else 'none'}
+params: {', '.join(param_names)}
+outputs: {schema.returns}"""
+            
+            documents[name] = doc
+        
+        return documents
+
 
 def register_tools_from_modules(modules: List[Any]) -> None:
     """
@@ -164,6 +196,7 @@ def tool(
     name: Optional[str] = None,
     description: Optional[str] = None,
     version: str = "1.0.0",
+    capabilities: Optional[List[str]] = None,
     param_overrides: Optional[Dict[str, Dict[str, Any]]] = None,
 ) -> Callable:
     """
@@ -173,20 +206,26 @@ def tool(
         name: Tool name (defaults to function name)
         description: Tool description (defaults to function docstring)
         version: Tool version
+        capabilities: Tool capabilities (e.g., ["aggregate", "group_by"])
+        param_overrides: Per-parameter overrides
     
     Returns:
         Decorated function
     
     Example:
-        @tool(description="Load a dataset from CSV file")
-        def load_dataset(path: str, encoding: str = "utf-8") -> pd.DataFrame:
-            '''Load dataset from file.'''
+        @tool(
+            description="Aggregate data by groups",
+            capabilities=["aggregate", "group_by", "summarize"]
+        )
+        def aggregate(df: pd.DataFrame, group_by: List[str]) -> pd.DataFrame:
+            '''Aggregate data by groups.'''
             ...
     """
     def decorator(func: Callable) -> Callable:
         # Extract metadata
         tool_name = name or func.__name__
         tool_description = description or (func.__doc__ or "").strip().split("\n")[0]
+        tool_capabilities = capabilities or []
         overrides = param_overrides or {}
         
         # Extract parameters from function signature
@@ -264,7 +303,8 @@ def tool(
             description=tool_description,
             parameters=parameters,
             returns=returns_str,
-            version=version
+            version=version,
+            capabilities=tool_capabilities,
         )
         
         # Register tool

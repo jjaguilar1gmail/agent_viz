@@ -1,11 +1,133 @@
 """Schema-derived tags and data shape detection."""
 
-from typing import List, Set
+from typing import Dict, List, Set
 
 from autoviz_agent.models.state import SchemaProfile
 from autoviz_agent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+
+# =============================================================================
+# Requirement-to-Capability Mapping (Deterministic)
+# =============================================================================
+
+# This is the source of truth for coverage validation.
+# Each requirement type maps to a set of tool capabilities that can satisfy it.
+
+REQUIREMENT_TO_CAPABILITY_MAP: Dict[str, List[str]] = {
+    # Analysis types
+    "total": ["aggregate", "summary_stats", "compute"],
+    "compare": ["aggregate", "segment", "group_by", "compare"],
+    "trend": ["time_series", "plot", "trend", "time_series_plot", "time_series_features"],
+    "distribution": ["distribution_plot", "distribution_stats", "plot", "frequency"],
+    "anomaly": ["anomaly_detection", "outlier_detection"],
+    "correlation": ["correlation", "relationship", "plot"],
+    
+    # Output types
+    "chart": ["plot", "visualization"],
+    "table": ["aggregate", "summary_stats", "compute"],
+    
+    # Special requirements
+    "group_by": ["aggregate", "segment", "group_by"],
+    "time": ["time_series", "parse_datetime", "temporal"],
+}
+
+# Capability aliases for backwards compatibility
+CAPABILITY_ALIASES: Dict[str, str] = {
+    "summarize": "summary_stats",
+    "group": "group_by",
+    "temporal": "time_series",
+    "viz": "plot",
+    "chart": "plot",
+}
+
+# Core capabilities that should always be available
+CORE_CAPABILITIES: Set[str] = {
+    "aggregate",
+    "plot",
+    "summary_stats",
+}
+
+
+# =============================================================================
+# Validation Functions
+# =============================================================================
+
+def get_required_capabilities(requirement_label: str) -> List[str]:
+    """
+    Get capabilities that can satisfy a requirement.
+    
+    Args:
+        requirement_label: Requirement type (e.g., "total", "compare")
+    
+    Returns:
+        List of capability names
+    
+    Raises:
+        ValueError: If requirement label is unknown
+    """
+    if requirement_label not in REQUIREMENT_TO_CAPABILITY_MAP:
+        # Check if it's a special case (outputs, group_by, time)
+        if requirement_label in ["chart", "table", "group_by", "time"]:
+            return REQUIREMENT_TO_CAPABILITY_MAP[requirement_label]
+        
+        raise ValueError(
+            f"Unknown requirement label: '{requirement_label}'. "
+            f"Allowed: {list(REQUIREMENT_TO_CAPABILITY_MAP.keys())}"
+        )
+    
+    return REQUIREMENT_TO_CAPABILITY_MAP[requirement_label]
+
+
+def normalize_capability(capability: str) -> str:
+    """
+    Normalize capability name using aliases.
+    
+    Args:
+        capability: Capability name
+    
+    Returns:
+        Normalized capability name
+    """
+    return CAPABILITY_ALIASES.get(capability, capability)
+
+
+def infer_time_grain(
+    data_span_days: int,
+    num_points: int,
+    missing_dates_pct: float
+) -> str:
+    """
+    Infer appropriate time grain for plotting.
+    
+    Args:
+        data_span_days: Total days spanned by data
+        num_points: Number of data points
+        missing_dates_pct: Percentage of missing dates/irregular intervals
+    
+    Returns:
+        Time grain: "daily", "weekly", "monthly", "yearly"
+    """
+    # If missing dates exceed 20%, prefer weekly
+    if missing_dates_pct > 0.2:
+        return "weekly"
+    
+    # If span is < 90 days or > 60 points: daily
+    if data_span_days < 90 or num_points > 60:
+        return "daily"
+    
+    # If span is 90-365 days: weekly
+    if data_span_days <= 365:
+        return "weekly"
+    
+    # Otherwise: monthly
+    return "monthly"
+
+
+# =============================================================================
+# Schema Tag Extraction
+# =============================================================================
 
 
 def extract_schema_tags(schema: SchemaProfile) -> Set[str]:

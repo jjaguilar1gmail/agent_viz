@@ -7,6 +7,10 @@ from typing import Any, Dict, List, Optional
 from autoviz_agent.models.state import Intent, IntentLabel, SchemaProfile
 from autoviz_agent.utils.logging import get_logger
 from autoviz_agent.llm.prompts import PromptBuilder
+from autoviz_agent.llm.llm_contracts import (
+    RequirementExtractionOutput,
+    validate_requirement_extraction_output,
+)
 from autoviz_agent.registry.intents import classify_intent_by_keywords
 from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
 
@@ -185,6 +189,40 @@ class LLMClient:
                 confidence=0.5,
                 top_intents=[{"general_eda": 0.5}],
             )
+
+    def extract_requirements(
+        self, user_question: str, schema: SchemaProfile
+    ) -> RequirementExtractionOutput:
+        """
+        Extract structured requirements from user question.
+
+        Args:
+            user_question: User's analytical question
+            schema: Inferred schema profile
+
+        Returns:
+            RequirementExtractionOutput with structured requirements
+        """
+        # Build prompt for requirement extraction using PromptBuilder
+        prompt = self.prompt_builder.build_requirement_extraction_prompt(user_question, schema)
+        self.last_prompt = prompt
+        
+        logger.info("Extracting requirements from user question")
+        response = self._generate(prompt, max_tokens=300, stop=["\n\n"])
+        self.last_response = response
+        
+        # Parse response
+        try:
+            result = json.loads(response)
+            validated = validate_requirement_extraction_output(result)
+            
+            logger.info(f"Extracted requirements: metrics={validated.metrics}, "
+                       f"group_by={validated.group_by}, analysis={validated.analysis}")
+            return validated
+        except Exception as e:
+            logger.warning(f"Failed to parse requirement extraction response: {e}. Using empty requirements.")
+            # Return empty requirements on failure
+            return RequirementExtractionOutput()
 
     def adapt_plan(
         self,

@@ -20,6 +20,7 @@ configure_matplotlib_backend()
 
 @tool(
     description="Create line plot",
+    capabilities=["plot", "time_series", "trend"],
     param_overrides={
         "x": {"role": "temporal"},
         "y": {"role": "numeric"},
@@ -68,6 +69,7 @@ def plot_line(
 
 @tool(
     description="Create bar plot",
+    capabilities=["plot", "compare", "segment"],
     param_overrides={
         "x": {"role": "categorical"},
         "y": {"role": "numeric"},
@@ -130,6 +132,7 @@ def plot_bar(
 
 @tool(
     description="Create scatter plot",
+    capabilities=["plot", "correlation", "relationship"],
     param_overrides={
         "x": {"role": "numeric"},
         "y": {"role": "numeric"},
@@ -184,6 +187,7 @@ def plot_scatter(
 
 @tool(
     description="Create histogram",
+    capabilities=["plot", "distribution", "frequency"],
     param_overrides={"column": {"role": "numeric"}},
 )
 def plot_histogram(

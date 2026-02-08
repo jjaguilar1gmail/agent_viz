@@ -45,6 +45,80 @@ class IntentOutput(BaseModel):
 
 
 # =============================================================================
+# Requirement Extraction Contracts
+# =============================================================================
+
+ALLOWED_ANALYSIS_TYPES = [
+    "total",
+    "compare",
+    "trend",
+    "distribution",
+    "anomaly",
+    "correlation"
+]
+
+
+class TimeRequirement(BaseModel):
+    """Time-related requirements."""
+    
+    column: str = Field(
+        default="",
+        description="Time column name, empty if not temporal analysis"
+    )
+    
+    grain: str = Field(
+        default="unknown",
+        description="Time grain (daily, weekly, monthly, yearly, or unknown)"
+    )
+
+
+class RequirementExtractionOutput(BaseModel):
+    """Structured requirements extracted from user question."""
+    
+    metrics: List[str] = Field(
+        default_factory=list,
+        description="Numeric columns to analyze (e.g., revenue, sales)"
+    )
+    
+    group_by: List[str] = Field(
+        default_factory=list,
+        description="Categorical columns for grouping/segmentation"
+    )
+    
+    time: TimeRequirement = Field(
+        default_factory=TimeRequirement,
+        description="Time-related requirements"
+    )
+    
+    analysis: List[str] = Field(
+        default_factory=list,
+        description="Analysis types from allowed set"
+    )
+    
+    outputs: List[str] = Field(
+        default_factory=list,
+        description="Output types: chart, table, or both"
+    )
+    
+    constraints: List[str] = Field(
+        default_factory=list,
+        description="Special conditions, filters, or requirements"
+    )
+    
+    @field_validator("analysis")
+    @classmethod
+    def validate_analysis(cls, values: List[str]) -> List[str]:
+        """Validate that all analysis types are from allowed set."""
+        for value in values:
+            if value not in ALLOWED_ANALYSIS_TYPES:
+                raise ValueError(
+                    f"Unknown analysis type: {value}. "
+                    f"Allowed: {ALLOWED_ANALYSIS_TYPES}"
+                )
+        return values
+
+
+# =============================================================================
 # Plan Adaptation Contracts
 # =============================================================================
 
@@ -181,6 +255,67 @@ def get_adaptation_schema() -> Dict[str, Any]:
     }
 
 
+def get_requirement_extraction_schema() -> Dict[str, Any]:
+    """
+    Get JSON schema for requirement extraction.
+    
+    Compatible with xgrammar2 grammar generation and JSON Schema Draft 7.
+    
+    Returns:
+        JSON schema dict
+    """
+    return {
+        "type": "object",
+        "properties": {
+            "metrics": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Numeric columns to analyze"
+            },
+            "group_by": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Categorical columns for grouping"
+            },
+            "time": {
+                "type": "object",
+                "properties": {
+                    "column": {
+                        "type": "string",
+                        "description": "Time column name"
+                    },
+                    "grain": {
+                        "type": "string",
+                        "description": "Time grain or unknown"
+                    }
+                },
+                "required": ["column", "grain"],
+                "additionalProperties": False
+            },
+            "analysis": {
+                "type": "array",
+                "items": {
+                    "type": "string",
+                    "enum": ALLOWED_ANALYSIS_TYPES
+                },
+                "description": "Analysis types from allowed set"
+            },
+            "outputs": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Output types: chart, table"
+            },
+            "constraints": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Special conditions or filters"
+            }
+        },
+        "required": ["metrics", "group_by", "time", "analysis", "outputs", "constraints"],
+        "additionalProperties": False
+    }
+
+
 # =============================================================================
 # Validation Helpers
 # =============================================================================
@@ -215,3 +350,21 @@ def validate_adaptation_output(data: Dict[str, Any]) -> AdaptationOutput:
         ValidationError if data doesn't match schema
     """
     return AdaptationOutput(**data)
+
+
+def validate_requirement_extraction_output(
+    data: Dict[str, Any]
+) -> RequirementExtractionOutput:
+    """
+    Validate and parse requirement extraction output.
+    
+    Args:
+        data: Raw dict from LLM
+        
+    Returns:
+        Validated RequirementExtractionOutput
+        
+    Raises:
+        ValidationError if data doesn't match schema
+    """
+    return RequirementExtractionOutput(**data)

@@ -12,6 +12,7 @@ logger = get_logger(__name__)
 
 @tool(
     description="Aggregate data by groups",
+    capabilities=["aggregate", "group_by", "summarize"],
     param_overrides={
         "group_by": {"required": False, "default": "auto", "role": "categorical"},
         "agg_map": {"required": False, "default": "auto"},
@@ -38,6 +39,7 @@ def aggregate(
 
 @tool(
     description="Compute summary statistics",
+    capabilities=["summary_stats", "aggregate"],
     param_overrides={"columns": {"role": "numeric"}},
 )
 def compute_summary_stats(df: pd.DataFrame, columns: Optional[List[str]] = None) -> Dict[str, Any]:

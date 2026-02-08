@@ -12,9 +12,15 @@ from autoviz_agent.registry.intents import (
     render_intent_rules,
 )
 from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
+from autoviz_agent.llm.llm_contracts import (
+    get_intent_schema,
+    get_adaptation_schema,
+    get_requirement_extraction_schema,
+    ALLOWED_ANALYSIS_TYPES,
+)
 
 
-# JSON Schemas for LLM outputs
+# JSON Schemas for LLM outputs (legacy, use llm_contracts for new code)
 INTENT_SCHEMA = {
     "type": "object",
     "properties": {
@@ -315,13 +321,103 @@ Your JSON response:"""
         Get JSON schema for prompt output validation.
 
         Args:
-            prompt_type: Type of prompt ("intent" or "adaptation")
+            prompt_type: Type of prompt ("intent", "adaptation", or "requirements")
 
         Returns:
             JSON schema dict or None if not found
         """
         schemas = {
-            "intent": INTENT_SCHEMA,
-            "adaptation": ADAPTATION_SCHEMA
+            "intent": get_intent_schema(),
+            "adaptation": get_adaptation_schema(),
+            "requirements": get_requirement_extraction_schema(),
         }
         return schemas.get(prompt_type)
+
+    def build_requirement_extraction_prompt(
+        self, question: str, schema: SchemaProfile
+    ) -> str:
+        """
+        Build prompt for requirement extraction.
+
+        Args:
+            question: User's question
+            schema: Dataset schema profile
+
+        Returns:
+            Formatted prompt string
+        """
+        # Try loading from template file first
+        template = self._load_template("requirements")
+        if template:
+            return self._format_requirement_template(template, question, schema)
+        
+        # Fall back to embedded prompt
+        return self._build_embedded_requirement_prompt(question, schema)
+
+    def _format_requirement_template(
+        self, template: str, question: str, schema: SchemaProfile
+    ) -> str:
+        """Format requirement extraction template with variables."""
+        column_info = ', '.join(f"{c.name}({c.dtype})" for c in schema.columns[:10])
+        if len(schema.columns) > 10:
+            column_info += '...'
+        
+        temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
+        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'float', 'int']]
+        categorical_cols = [c.name for c in schema.columns if c.dtype in ['object', 'string', 'category']]
+        
+        return template.format(
+            question=question,
+            row_count=schema.row_count,
+            column_count=len(schema.columns),
+            column_info=column_info,
+            temporal_cols=', '.join(temporal_cols) if temporal_cols else 'none',
+            numeric_cols=', '.join(numeric_cols) if numeric_cols else 'none',
+            categorical_cols=', '.join(categorical_cols) if categorical_cols else 'none',
+        )
+
+    def _build_embedded_requirement_prompt(
+        self, question: str, schema: SchemaProfile
+    ) -> str:
+        """Build requirement extraction prompt using embedded template."""
+        column_info = ', '.join(f"{c.name}({c.dtype})" for c in schema.columns[:10])
+        if len(schema.columns) > 10:
+            column_info += '...'
+        
+        temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
+        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'float', 'int']]
+        categorical_cols = [c.name for c in schema.columns if c.dtype in ['object', 'string', 'category']]
+        
+        return f"""Extract structured requirements from the user's question. Use a closed set of analysis types.
+
+USER QUESTION: "{question}"
+
+DATASET SCHEMA:
+- Rows: {schema.row_count}, Columns: {len(schema.columns)}
+- Column names: {column_info}
+- Temporal columns: {', '.join(temporal_cols) if temporal_cols else 'none'}
+- Numeric columns: {', '.join(numeric_cols) if numeric_cols else 'none'}
+- Categorical columns: {', '.join(categorical_cols) if categorical_cols else 'none'}
+
+ALLOWED ANALYSIS TYPES (select all that apply):
+{', '.join(f'"{t}"' for t in ALLOWED_ANALYSIS_TYPES)}
+
+EXTRACTION RULES:
+1. Metrics: List numeric columns to analyze
+2. Group By: List categorical columns for grouping
+3. Time: Specify time column and grain (daily, weekly, monthly, yearly, or "unknown")
+4. Analysis: Select ONLY the types from allowed list that match the question
+5. Outputs: Specify "chart", "table", or both
+6. Constraints: List any filters or special conditions
+
+EXAMPLES:
+Q: "Show me revenue totals by region"
+{{"metrics": ["revenue"], "group_by": ["region"], "time": {{"column": "", "grain": "unknown"}}, "analysis": ["total", "compare"], "outputs": ["chart", "table"], "constraints": []}}
+
+Q: "Get revenue by region and product over time"
+{{"metrics": ["revenue"], "group_by": ["region", "product_type"], "time": {{"column": "date", "grain": "unknown"}}, "analysis": ["total", "compare", "trend"], "outputs": ["chart", "table"], "constraints": []}}
+
+Your response (JSON only, no other text):
+{{"metrics": [...], "group_by": [...], "time": {{"column": "...", "grain": "..."}}, "analysis": [...], "outputs": [...], "constraints": []}}
+
+Response:"""

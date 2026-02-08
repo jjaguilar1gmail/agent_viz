@@ -13,8 +13,11 @@ from autoviz_agent.llm.prompts import PromptBuilder
 from autoviz_agent.llm.llm_contracts import (
     get_intent_schema,
     get_adaptation_schema,
+    get_requirement_extraction_schema,
     validate_intent_output,
     validate_adaptation_output,
+    validate_requirement_extraction_output,
+    RequirementExtractionOutput,
 )
 from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
 
@@ -251,6 +254,44 @@ class VLLMClient:
                 confidence=0.5,
                 top_intents=[{"general_eda": 0.5}],
             )
+
+    def extract_requirements(
+        self, user_question: str, schema: SchemaProfile
+    ) -> RequirementExtractionOutput:
+        """
+        Extract structured requirements from user question.
+
+        Args:
+            user_question: User's analytical question
+            schema: Inferred schema profile
+
+        Returns:
+            RequirementExtractionOutput with structured requirements
+        """
+        # Build prompt for requirement extraction using PromptBuilder
+        prompt = self.prompt_builder.build_requirement_extraction_prompt(user_question, schema)
+        self.last_prompt = prompt
+        
+        # Get JSON schema for grammar constraint
+        requirements_schema = get_requirement_extraction_schema()
+        
+        logger.info("Extracting requirements from user question with vLLM")
+        response = self._generate(prompt, max_tokens=300, json_schema=requirements_schema)
+        self.last_response = response
+        
+        # Parse and validate response
+        try:
+            result = json.loads(response)
+            validated = validate_requirement_extraction_output(result)
+            
+            logger.info(f"Extracted requirements: metrics={validated.metrics}, "
+                       f"group_by={validated.group_by}, analysis={validated.analysis}")
+            return validated
+            
+        except Exception as e:
+            logger.warning(f"Failed to parse requirement extraction response: {e}. Using empty requirements.")
+            # Return empty requirements on failure
+            return RequirementExtractionOutput()
 
     def adapt_plan(
         self,
