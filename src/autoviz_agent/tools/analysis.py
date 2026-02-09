@@ -13,6 +13,7 @@ logger = get_logger(__name__)
 
 @tool(
     description="Detect anomalies",
+    capabilities=["anomaly_detection", "outlier_detection"],
     param_overrides={"column": {"role": "numeric"}},
 )
 def detect_anomalies(

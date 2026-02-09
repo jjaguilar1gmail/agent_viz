@@ -10,6 +10,7 @@ from autoviz_agent.llm.prompts import PromptBuilder
 from autoviz_agent.llm.llm_contracts import (
     RequirementExtractionOutput,
     validate_requirement_extraction_output,
+    validate_requirement_columns,
 )
 from autoviz_agent.registry.intents import classify_intent_by_keywords
 from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
@@ -215,9 +216,23 @@ class LLMClient:
         try:
             result = json.loads(response)
             validated = validate_requirement_extraction_output(result)
-            
-            logger.info(f"Extracted requirements: metrics={validated.metrics}, "
-                       f"group_by={validated.group_by}, analysis={validated.analysis}")
+
+            is_valid, errors = validate_requirement_columns(validated, schema)
+            if not is_valid:
+                validation_errors = "Invalid columns:\n- " + "\n- ".join(errors)
+                retry_prompt = self.prompt_builder.build_requirement_extraction_prompt(
+                    user_question, schema, validation_errors=validation_errors
+                )
+                self.last_prompt = retry_prompt
+                response = self._generate(retry_prompt, max_tokens=300, stop=["\n\n"])
+                self.last_response = response
+                result = json.loads(response)
+                validated = validate_requirement_extraction_output(result)
+
+            logger.info(
+                f"Extracted requirements: metrics={validated.metrics}, "
+                f"group_by={validated.group_by}, analysis={validated.analysis}"
+            )
             return validated
         except Exception as e:
             logger.warning(f"Failed to parse requirement extraction response: {e}. Using empty requirements.")
@@ -231,6 +246,8 @@ class LLMClient:
         intent: Intent,
         user_question: str,
         narrowed_tools: Optional[List[str]] = None,
+        requirements: Optional[Any] = None,
+        validation_errors: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Adapt plan template based on schema and intent.
@@ -247,7 +264,13 @@ class LLMClient:
         """
         # Build prompt for plan adaptation using PromptBuilder
         prompt = self.prompt_builder.build_adaptation_prompt(
-            template_plan, schema, intent, user_question, narrowed_tools
+            template_plan,
+            schema,
+            intent,
+            user_question,
+            narrowed_tools,
+            requirements,
+            validation_errors,
         )
         self.last_prompt = prompt
         
@@ -289,6 +312,10 @@ class LLMClient:
         for change in changes:
             action = change.get("action")
             step_id = change.get("step_id")
+            existing_step = next(
+                (s for s in adapted.get("steps", []) if s.get("step_id") == step_id),
+                None,
+            )
             
             if action == "remove":
                 adapted["steps"] = [s for s in adapted.get("steps", []) if s.get("step_id") != step_id]
@@ -296,7 +323,22 @@ class LLMClient:
                 for step in adapted.get("steps", []):
                     if step.get("step_id") == step_id:
                         step["params"].update(change.get("params", {}))
+                        if change.get("description"):
+                            step["description"] = change.get("description")
+                        if change.get("tool"):
+                            step["tool"] = change.get("tool")
             elif action == "add":
+                if existing_step is not None:
+                    logger.warning(
+                        "Step_id '%s' already exists; converting add -> modify",
+                        step_id,
+                    )
+                    existing_step["params"].update(change.get("params", {}))
+                    if change.get("description"):
+                        existing_step["description"] = change.get("description")
+                    if change.get("tool"):
+                        existing_step["tool"] = change.get("tool")
+                    continue
                 # Get tool name and validate/correct it
                 tool_name = change.get("tool", "unknown")
                 

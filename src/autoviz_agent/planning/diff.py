@@ -5,12 +5,42 @@ from typing import Any, Dict, List, Set, Tuple
 from autoviz_agent.planning.schema_tags import (
     REQUIREMENT_TO_CAPABILITY_MAP,
     get_required_capabilities,
+    normalize_capability,
 )
 from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
 from autoviz_agent.llm.llm_contracts import RequirementExtractionOutput
 from autoviz_agent.utils.logging import get_logger
 
 logger = get_logger(__name__)
+
+def _build_required_labels(requirements: RequirementExtractionOutput) -> List[str]:
+    required_labels: List[str] = []
+    if requirements.analysis:
+        required_labels.extend([f"analysis.{label}" for label in requirements.analysis])
+    if requirements.outputs:
+        required_labels.extend([f"output.{label}" for label in requirements.outputs])
+    if requirements.group_by:
+        required_labels.append("group_by")
+    if requirements.time and requirements.time.column:
+        required_labels.append("time")
+    return required_labels
+
+
+def _compute_satisfies(
+    required_labels: List[str],
+    normalized_caps: Set[str],
+) -> List[str]:
+    computed: List[str] = []
+    for label in required_labels:
+        requirement_key = label.split(".", 1)[-1]
+        try:
+            required_caps = get_required_capabilities(requirement_key)
+        except ValueError:
+            continue
+        normalized_required = {normalize_capability(c) for c in required_caps}
+        if normalized_caps & normalized_required:
+            computed.append(label)
+    return computed
 
 
 def generate_diff(
@@ -134,6 +164,9 @@ def validate_plan_coverage(
     for name, schema in schemas.items():
         tool_capabilities[name] = set(schema.capabilities)
     
+    # Build required labels from requirements
+    required_labels = _build_required_labels(requirements)
+
     # Extract capabilities from plan steps
     plan_capabilities = set()
     step_to_requirements = {}
@@ -142,13 +175,16 @@ def validate_plan_coverage(
     for step in plan.get("steps", []):
         tool_name = step.get("tool")
         step_id = step.get("step_id")
-        
-        # Track what requirements this step claims to satisfy
-        satisfies = step.get("satisfies", [])
-        if satisfies:
-            step_to_requirements[step_id] = satisfies
+        tool_caps = tool_capabilities.get(tool_name, set())
+        normalized_caps = {normalize_capability(c) for c in tool_caps}
+
+        # Compute satisfies based on tool capabilities and required labels
+        computed_satisfies = _compute_satisfies(required_labels, normalized_caps)
+
+        step["satisfies"] = computed_satisfies
+        if computed_satisfies:
+            step_to_requirements[step_id] = computed_satisfies
         else:
-            # Step doesn't declare what it satisfies - potential unjustified step
             unjustified_steps.append(step_id)
         
         # Add tool capabilities to plan
@@ -209,6 +245,44 @@ def validate_plan_coverage(
     return is_valid, report
 
 
+def prune_unjustified_steps(
+    plan: Dict[str, Any],
+    requirements: RequirementExtractionOutput,
+) -> List[str]:
+    """
+    Remove plan steps that do not satisfy any requirement.
+
+    Returns:
+        List of removed step_ids.
+    """
+    ensure_default_tools_registered()
+    required_labels = _build_required_labels(requirements)
+
+    tool_capabilities = {}
+    schemas = TOOL_REGISTRY.get_all_schemas()
+    for name, schema in schemas.items():
+        tool_capabilities[name] = set(schema.capabilities)
+
+    kept_steps = []
+    removed_steps: List[str] = []
+
+    for step in plan.get("steps", []):
+        tool_name = step.get("tool")
+        step_id = step.get("step_id")
+        tool_caps = tool_capabilities.get(tool_name, set())
+        normalized_caps = {normalize_capability(c) for c in tool_caps}
+        computed_satisfies = _compute_satisfies(required_labels, normalized_caps)
+        if computed_satisfies:
+            kept_steps.append(step)
+        else:
+            removed_steps.append(step_id)
+
+    if removed_steps:
+        plan["steps"] = kept_steps
+
+    return removed_steps
+
+
 def generate_coverage_error_payload(
     validation_report: Dict[str, Any]
 ) -> str:
@@ -235,5 +309,11 @@ def generate_coverage_error_payload(
         for step_id in unjustified:
             lines.append(f"  - {step_id}")
         lines.append("\nPlease add 'satisfies' field to each step or remove unjustified steps.")
-    
+
+    column_errors = validation_report.get("column_errors", [])
+    if column_errors:
+        lines.append("\nInvalid column references:")
+        for error in column_errors:
+            lines.append(f"  - {error}")
+
     return "\n".join(lines)

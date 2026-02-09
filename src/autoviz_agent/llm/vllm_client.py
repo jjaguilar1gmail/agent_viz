@@ -17,6 +17,7 @@ from autoviz_agent.llm.llm_contracts import (
     validate_intent_output,
     validate_adaptation_output,
     validate_requirement_extraction_output,
+    validate_requirement_columns,
     RequirementExtractionOutput,
 )
 from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
@@ -268,12 +269,20 @@ class VLLMClient:
         Returns:
             RequirementExtractionOutput with structured requirements
         """
+        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'float', 'int']]
+        categorical_cols = [c.name for c in schema.columns if c.dtype in ['object', 'string', 'category']]
+        temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
+
         # Build prompt for requirement extraction using PromptBuilder
         prompt = self.prompt_builder.build_requirement_extraction_prompt(user_question, schema)
         self.last_prompt = prompt
         
-        # Get JSON schema for grammar constraint
-        requirements_schema = get_requirement_extraction_schema()
+        # Get JSON schema for grammar constraint with dynamic enums
+        requirements_schema = get_requirement_extraction_schema(
+            numeric_columns=numeric_cols,
+            categorical_columns=categorical_cols,
+            temporal_columns=temporal_cols,
+        )
         
         logger.info("Extracting requirements from user question with vLLM")
         try:
@@ -288,9 +297,27 @@ class VLLMClient:
         try:
             result = json.loads(response)
             validated = validate_requirement_extraction_output(result)
-            
-            logger.info(f"Extracted requirements: metrics={validated.metrics}, "
-                       f"group_by={validated.group_by}, analysis={validated.analysis}")
+
+            is_valid, errors = validate_requirement_columns(validated, schema)
+            if not is_valid:
+                validation_errors = "Invalid columns:\n- " + "\n- ".join(errors)
+                retry_prompt = self.prompt_builder.build_requirement_extraction_prompt(
+                    user_question, schema, validation_errors=validation_errors
+                )
+                self.last_prompt = retry_prompt
+                response = self._generate(
+                    retry_prompt,
+                    max_tokens=300,
+                    json_schema=requirements_schema,
+                )
+                self.last_response = response
+                result = json.loads(response)
+                validated = validate_requirement_extraction_output(result)
+
+            logger.info(
+                f"Extracted requirements: metrics={validated.metrics}, "
+                f"group_by={validated.group_by}, analysis={validated.analysis}"
+            )
             return validated
             
         except json.JSONDecodeError as e:
@@ -311,6 +338,8 @@ class VLLMClient:
         intent: Intent,
         user_question: str,
         narrowed_tools: Optional[List[str]] = None,
+        requirements: Optional[Any] = None,
+        validation_errors: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Adapt plan template based on schema and intent.
@@ -327,12 +356,28 @@ class VLLMClient:
         """
         # Build prompt for plan adaptation using PromptBuilder
         prompt = self.prompt_builder.build_adaptation_prompt(
-            template_plan, schema, intent, user_question, narrowed_tools
+            template_plan,
+            schema,
+            intent,
+            user_question,
+            narrowed_tools,
+            requirements,
+            validation_errors,
         )
         self.last_prompt = prompt
         
+        allowed_columns = [c.name for c in schema.columns]
+        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'float', 'int']]
+        categorical_cols = [c.name for c in schema.columns if c.dtype in ['object', 'string', 'category']]
+        temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
+
         # Get JSON schema for grammar constraint
-        adaptation_schema = get_adaptation_schema()
+        adaptation_schema = get_adaptation_schema(
+            allowed_columns=allowed_columns,
+            numeric_columns=numeric_cols,
+            categorical_columns=categorical_cols,
+            temporal_columns=temporal_cols,
+        )
         
         logger.info("Adapting plan template with vLLM")
         response = self._generate(prompt, max_tokens=400, json_schema=adaptation_schema)
@@ -376,6 +421,10 @@ class VLLMClient:
         for change in changes:
             action = change.get("action")
             step_id = change.get("step_id")
+            existing_step = next(
+                (s for s in adapted.get("steps", []) if s.get("step_id") == step_id),
+                None,
+            )
             
             if action == "remove":
                 adapted["steps"] = [s for s in adapted.get("steps", []) if s.get("step_id") != step_id]
@@ -383,7 +432,22 @@ class VLLMClient:
                 for step in adapted.get("steps", []):
                     if step.get("step_id") == step_id:
                         step["params"].update(change.get("params", {}))
+                        if change.get("description"):
+                            step["description"] = change.get("description")
+                        if change.get("tool"):
+                            step["tool"] = change.get("tool")
             elif action == "add":
+                if existing_step is not None:
+                    logger.warning(
+                        "Step_id '%s' already exists; converting add -> modify",
+                        step_id,
+                    )
+                    existing_step["params"].update(change.get("params", {}))
+                    if change.get("description"):
+                        existing_step["description"] = change.get("description")
+                    if change.get("tool"):
+                        existing_step["tool"] = change.get("tool")
+                    continue
                 # Get tool name and validate/correct it
                 tool_name = change.get("tool", "unknown")
                 

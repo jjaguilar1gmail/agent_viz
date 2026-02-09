@@ -14,6 +14,12 @@ Extract structured requirements from the user's question. Use a closed set of an
 - Numeric columns: {numeric_cols}
 - Categorical columns: {categorical_cols}
 
+IMPORTANT: Only choose column names from the lists above. Do not invent or rename columns.
+
+## Validation Errors (if any)
+
+{validation_errors}
+
 ## Allowed Analysis Types
 
 Use ONLY these labels (select all that apply from the question):
@@ -58,7 +64,7 @@ Question: "Get revenue totals by region and product type over time"
 ```json
 {{
   "metrics": ["revenue"],
-  "group_by": ["region", "product_type"],
+  "group_by": ["region", "product_category"],
   "time": {{"column": "date", "grain": "unknown"}},
   "analysis": ["total", "compare", "trend"],
   "outputs": ["chart", "table"],

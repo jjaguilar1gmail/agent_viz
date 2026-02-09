@@ -46,9 +46,10 @@ ADAPTATION_SCHEMA = {
                     "step_id": {"type": "string"},
                     "tool": {"type": "string"},
                     "description": {"type": "string"},
-                    "params": {"type": "object"}
+                    "params": {"type": "object"},
+                    "satisfies": {"type": "array", "items": {"type": "string"}}
                 },
-                "required": ["action", "step_id"]
+                "required": ["action", "step_id", "satisfies"]
             }
         },
         "rationale": {"type": "string"}
@@ -166,7 +167,9 @@ Response:"""
         schema: SchemaProfile,
         intent: Intent,
         user_question: str,
-        narrowed_tools: Optional[List[str]] = None
+        narrowed_tools: Optional[List[str]] = None,
+        requirements: Optional[Any] = None,
+        validation_errors: Optional[str] = None,
     ) -> str:
         """
         Build prompt for plan adaptation.
@@ -185,12 +188,25 @@ Response:"""
         template = self._load_template("adapt_plan")
         if template:
             return self._format_adaptation_template(
-                template, template_plan, schema, intent, user_question, narrowed_tools
+                template,
+                template_plan,
+                schema,
+                intent,
+                user_question,
+                narrowed_tools,
+                requirements,
+                validation_errors,
             )
         
         # Fall back to embedded prompt
         return self._build_embedded_adaptation_prompt(
-            template_plan, schema, intent, user_question, narrowed_tools
+            template_plan,
+            schema,
+            intent,
+            user_question,
+            narrowed_tools,
+            requirements,
+            validation_errors,
         )
 
     def _format_adaptation_template(
@@ -200,7 +216,9 @@ Response:"""
         schema: SchemaProfile,
         intent: Intent,
         question: str,
-        narrowed_tools: Optional[List[str]] = None
+        narrowed_tools: Optional[List[str]] = None,
+        requirements: Optional[Any] = None,
+        validation_errors: Optional[str] = None,
     ) -> str:
         """Format adaptation template with variables."""
         template_steps = plan.get('steps', [])
@@ -233,6 +251,8 @@ Response:"""
             categorical_cols=', '.join(categorical_cols) if categorical_cols else 'none',
             data_shape=schema.data_shape,
             tool_catalog=self._build_tool_catalog(narrowed_tools),
+            requirements_summary=self._format_requirements_summary(requirements),
+            validation_errors=validation_errors or "(none)",
             schema_json=json.dumps(ADAPTATION_SCHEMA, indent=2)
         )
 
@@ -242,7 +262,9 @@ Response:"""
         schema: SchemaProfile,
         intent: Intent,
         question: str,
-        narrowed_tools: Optional[List[str]] = None
+        narrowed_tools: Optional[List[str]] = None,
+        requirements: Optional[Any] = None,
+        validation_errors: Optional[str] = None,
     ) -> str:
         """Build adaptation prompt using embedded template."""
         template_steps = template.get('steps', [])
@@ -280,19 +302,28 @@ AVAILABLE COLUMNS (use EXACT names):
 - Numeric columns: {', '.join(numeric_cols) if numeric_cols else 'none'}
 - Categorical columns: {', '.join(categorical_cols) if categorical_cols else 'none'}
 
+REQUIREMENTS (must be satisfied):
+{self._format_requirements_summary(requirements)}
+
+VALIDATION ERRORS (if any):
+{validation_errors or "(none)"}
+
 AVAILABLE TOOLS (use EXACT names):
 {self._build_tool_catalog(narrowed_tools)}
 
 YOUR TASK:
-1. Check if the user question mentions specific requirements not in the template
-2. Look for keywords like "anomaly", "outlier", "unusual", "compare", "segment", "group by"
-3. Suggest adding, removing, or modifying steps to better match the question
+1. Use the Requirements section as the contract. Every requirement must be satisfied by at least one step.
+2. If `group_by` is non-empty, add or modify an `aggregate` step with the required group_by columns.
+3. If `time.column` is set, ensure a time-aware plot uses that column (and aggregated data if needed).
+4. Remove steps that do not satisfy any requirement.
+5. If Validation Errors are present, fix them explicitly.
+6. Prefer tools whose capabilities directly match the requirements (e.g., use compare tools for compare needs).
+7. Choose the minimal set of steps that fully covers the requirements.
 
 EXAMPLES:
-- User asks "find outliers" -> add step with tool="detect_anomalies"
-- User asks "compare revenue by region" -> add step with tool="aggregate", params={{"group_by": ["region"], "agg_func": "sum"}}
-- User asks "compare by region and product" -> add step with tool="aggregate", params={{"group_by": ["region", "product_category"], "agg_func": "sum"}}
-- Template fits perfectly -> return empty changes array
+- Requirements include group_by=["region"] -> add `aggregate` with group_by=["region"], agg_func="sum"
+- Requirements include analysis=["trend"] and time.column="date" -> ensure `plot_line` uses x="date"
+- Requirements do NOT include "anomaly" -> remove or do not add `detect_anomalies`
 
 CRITICAL RULES:
 1. ONLY use column names that appear in "AVAILABLE COLUMNS" above
@@ -300,13 +331,14 @@ CRITICAL RULES:
 3. Never invent or guess column names - only use what you see in the schema
 
 RESPONSE FORMAT (JSON only, no preamble):
-{{"changes": [{{"action": "add|remove|modify", "step_id": "<id>", "tool": "<exact_tool_name>", "description": "<reason>", "params": {{"df": "$dataframe"}}}}], "rationale": "<overall explanation>"}}
+{{"changes": [{{"action": "add|remove|modify", "step_id": "<id>", "tool": "<exact_tool_name>", "description": "<reason>", "params": {{"df": "$dataframe"}}, "satisfies": ["analysis.total"]}}], "rationale": "<overall explanation>"}}
 
 IMPORTANT:
 - tool MUST be an exact tool name from the list above (e.g., "aggregate", NOT "aggregate by region")
 - For grouping/comparing, use tool="aggregate" with group_by parameter
 - step_id must be unique (e.g., "compare_by_region_product")
 - Column names in params MUST exactly match the names from "AVAILABLE COLUMNS"
+- Include a non-empty "satisfies" list for each added or modified step.
 
 Your JSON response:"""
 
@@ -333,6 +365,29 @@ Your JSON response:"""
                 lines.append(f"- **{name}**")
         return "\n".join(lines)
 
+    def _format_requirements_summary(self, requirements: Optional[Any]) -> str:
+        """Format requirements summary for prompts."""
+        if not requirements:
+            return "- (none)"
+        metrics = getattr(requirements, "metrics", []) or []
+        group_by = getattr(requirements, "group_by", []) or []
+        analysis = getattr(requirements, "analysis", []) or []
+        outputs = getattr(requirements, "outputs", []) or []
+        constraints = getattr(requirements, "constraints", []) or []
+        time = getattr(requirements, "time", None)
+        time_col = getattr(time, "column", "") if time else ""
+        time_grain = getattr(time, "grain", "unknown") if time else "unknown"
+
+        lines = [
+            f"- metrics: {', '.join(metrics) if metrics else '[]'}",
+            f"- group_by: {', '.join(group_by) if group_by else '[]'}",
+            f"- time: column={time_col or 'none'}, grain={time_grain or 'unknown'}",
+            f"- analysis: {', '.join(analysis) if analysis else '[]'}",
+            f"- outputs: {', '.join(outputs) if outputs else '[]'}",
+            f"- constraints: {', '.join(constraints) if constraints else '[]'}",
+        ]
+        return "\n".join(lines)
+
     def get_schema(self, prompt_type: str) -> Dict[str, Any] | None:
         """
         Get JSON schema for prompt output validation.
@@ -351,7 +406,10 @@ Your JSON response:"""
         return schemas.get(prompt_type)
 
     def build_requirement_extraction_prompt(
-        self, question: str, schema: SchemaProfile
+        self,
+        question: str,
+        schema: SchemaProfile,
+        validation_errors: Optional[str] = None,
     ) -> str:
         """
         Build prompt for requirement extraction.
@@ -366,13 +424,21 @@ Your JSON response:"""
         # Try loading from template file first
         template = self._load_template("requirements")
         if template:
-            return self._format_requirement_template(template, question, schema)
+            return self._format_requirement_template(
+                template, question, schema, validation_errors
+            )
         
         # Fall back to embedded prompt
-        return self._build_embedded_requirement_prompt(question, schema)
+        return self._build_embedded_requirement_prompt(
+            question, schema, validation_errors
+        )
 
     def _format_requirement_template(
-        self, template: str, question: str, schema: SchemaProfile
+        self,
+        template: str,
+        question: str,
+        schema: SchemaProfile,
+        validation_errors: Optional[str] = None,
     ) -> str:
         """Format requirement extraction template with variables."""
         column_info = ', '.join(f"{c.name}({c.dtype})" for c in schema.columns[:10])
@@ -391,10 +457,14 @@ Your JSON response:"""
             temporal_cols=', '.join(temporal_cols) if temporal_cols else 'none',
             numeric_cols=', '.join(numeric_cols) if numeric_cols else 'none',
             categorical_cols=', '.join(categorical_cols) if categorical_cols else 'none',
+            validation_errors=validation_errors or "(none)",
         )
 
     def _build_embedded_requirement_prompt(
-        self, question: str, schema: SchemaProfile
+        self,
+        question: str,
+        schema: SchemaProfile,
+        validation_errors: Optional[str] = None,
     ) -> str:
         """Build requirement extraction prompt using embedded template."""
         column_info = ', '.join(f"{c.name}({c.dtype})" for c in schema.columns[:10])
@@ -415,6 +485,11 @@ DATASET SCHEMA:
 - Temporal columns: {', '.join(temporal_cols) if temporal_cols else 'none'}
 - Numeric columns: {', '.join(numeric_cols) if numeric_cols else 'none'}
 - Categorical columns: {', '.join(categorical_cols) if categorical_cols else 'none'}
+
+IMPORTANT: Only choose column names from the lists above. Do not invent or rename columns.
+
+VALIDATION ERRORS (if any):
+{validation_errors or "(none)"}
 
 ALLOWED ANALYSIS TYPES (select all that apply):
 {', '.join(f'"{t}"' for t in ALLOWED_ANALYSIS_TYPES)}

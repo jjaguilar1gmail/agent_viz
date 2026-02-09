@@ -325,14 +325,61 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
             state.schema,
             state.intent,
             state.question,
-            narrowed_tools=getattr(state, 'narrowed_tools', None)
+            narrowed_tools=getattr(state, 'narrowed_tools', None),
+            requirements=getattr(state, 'requirements', None),
         )
         state.adapted_plan = adapted_plan
+
+        state.llm_requests.append({
+            "step": "plan_adaptation",
+            "prompt": getattr(state.llm_client, "last_prompt", None),
+            "response": getattr(state.llm_client, "last_response", None),
+            "node": "adapt_plan",
+        })
+        if state.llm_requests[-1].get("prompt"):
+            state.artifact_manager.save_text(
+                state.llm_requests[-1]["prompt"],
+                "logs",
+                "llm_adapt_prompt.txt",
+            )
+        if state.llm_requests[-1].get("response"):
+            state.artifact_manager.save_text(
+                state.llm_requests[-1]["response"],
+                "logs",
+                "llm_adapt_response.txt",
+            )
         
         # Validate coverage if requirements exist
         if state.requirements and hasattr(state.requirements, 'metrics'):
-            from autoviz_agent.planning.diff import validate_plan_coverage
+            from autoviz_agent.planning.diff import (
+                validate_plan_coverage,
+                generate_coverage_error_payload,
+                prune_unjustified_steps,
+            )
+            from autoviz_agent.registry.validation import (
+                repair_plan_step_columns,
+                validate_plan_step_columns,
+            )
+
+            repairs = repair_plan_step_columns(adapted_plan, state.schema)
+            if repairs:
+                logger.info(
+                    "Repaired plan step columns: %s",
+                    "; ".join(repairs[:5]) + ("..." if len(repairs) > 5 else ""),
+                )
+
+            removed_steps = prune_unjustified_steps(adapted_plan, state.requirements)
+            if removed_steps:
+                logger.info(
+                    "Removed unjustified steps: %s",
+                    ", ".join(removed_steps),
+                )
+
+            column_errors = validate_plan_step_columns(adapted_plan, state.schema)
             is_valid, coverage_report = validate_plan_coverage(adapted_plan, state.requirements)
+            if column_errors:
+                coverage_report["column_errors"] = column_errors
+                is_valid = False
             
             if not is_valid:
                 logger.warning(f"Plan coverage validation failed: {coverage_report}")
@@ -354,30 +401,78 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
                         )
                         
                         logger.info(f"Expanded from {len(state.narrowed_tools)} to {len(expanded_tools)} tools")
-                        print(f"\n[Fallback] Expanding tool list to improve coverage ({len(state.narrowed_tools)} → {len(expanded_tools)} tools)")
+                        print(
+                            f"\n[Fallback] Expanding tool list to improve coverage "
+                            f"({len(state.narrowed_tools)} -> {len(expanded_tools)} tools)"
+                        )
                         
                         # Re-adapt with expanded tools
+                        error_payload = generate_coverage_error_payload(coverage_report)
                         adapted_plan = state.llm_client.adapt_plan(
                             state.template_plan,
                             state.schema,
                             state.intent,
                             state.question,
-                            narrowed_tools=expanded_tools
+                            narrowed_tools=expanded_tools,
+                            requirements=getattr(state, 'requirements', None),
+                            validation_errors=error_payload,
                         )
                         state.adapted_plan = adapted_plan
                         state.narrowed_tools = expanded_tools
+
+                        state.llm_requests.append({
+                            "step": "plan_adaptation_retry",
+                            "prompt": getattr(state.llm_client, "last_prompt", None),
+                            "response": getattr(state.llm_client, "last_response", None),
+                            "node": "adapt_plan",
+                        })
+                        if state.llm_requests[-1].get("prompt"):
+                            state.artifact_manager.save_text(
+                                state.llm_requests[-1]["prompt"],
+                                "logs",
+                                "llm_adapt_prompt_retry.txt",
+                            )
+                        if state.llm_requests[-1].get("response"):
+                            state.artifact_manager.save_text(
+                                state.llm_requests[-1]["response"],
+                                "logs",
+                                "llm_adapt_response_retry.txt",
+                            )
                         
                         # Re-validate coverage
+                        repairs_retry = repair_plan_step_columns(adapted_plan, state.schema)
+                        if repairs_retry:
+                            logger.info(
+                                "Repaired plan step columns (retry): %s",
+                                "; ".join(repairs_retry[:5]) + ("..." if len(repairs_retry) > 5 else ""),
+                            )
+
+                        removed_retry = prune_unjustified_steps(adapted_plan, state.requirements)
+                        if removed_retry:
+                            logger.info(
+                                "Removed unjustified steps (retry): %s",
+                                ", ".join(removed_retry),
+                            )
+
+                        column_errors_retry = validate_plan_step_columns(adapted_plan, state.schema)
                         is_valid_retry, coverage_report_retry = validate_plan_coverage(adapted_plan, state.requirements)
+                        if column_errors_retry:
+                            coverage_report_retry["column_errors"] = column_errors_retry
+                            is_valid_retry = False
                         if is_valid_retry:
                             logger.info("Coverage improved after tool expansion")
                             print("[Fallback] Coverage validation passed after expansion")
                         else:
                             logger.warning(f"Coverage still insufficient after expansion: {coverage_report_retry}")
+                            error_payload = generate_coverage_error_payload(coverage_report_retry)
+                            return {"current_node": "error", "error_message": error_payload}
                     except Exception as e:
                         logger.error(f"Tool expansion fallback failed: {e}")
+                        return {"current_node": "error", "error_message": str(e)}
                 else:
                     logger.warning("Coverage retry limit reached, proceeding with current plan")
+                    error_payload = generate_coverage_error_payload(coverage_report)
+                    return {"current_node": "error", "error_message": error_payload}
         
         # Track LLM interaction
         state.llm_interactions.append({
@@ -392,29 +487,11 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
             },
             "node": "adapt_plan"
         })
-        state.llm_requests.append({
-            "step": "plan_adaptation",
-            "prompt": getattr(state.llm_client, "last_prompt", None),
-            "response": getattr(state.llm_client, "last_response", None),
-            "node": "adapt_plan",
-        })
         state.artifact_manager.save_json(
             state.llm_requests,
             "llm_requests",
             "llm_requests.json",
         )
-        if state.llm_requests[-1].get("prompt"):
-            state.artifact_manager.save_text(
-                state.llm_requests[-1]["prompt"],
-                "llm_requests",
-                "llm_adapt_prompt.txt",
-            )
-        if state.llm_requests[-1].get("response"):
-            state.artifact_manager.save_text(
-                state.llm_requests[-1]["response"],
-                "llm_requests",
-                "llm_adapt_response.txt",
-            )
         
         # Save adapted plan
         adapted_path = state.artifact_manager.save_json(adapted_plan, "plan_adapted", "plan_adapted.json")

@@ -9,7 +9,12 @@ from pydantic import ValidationError
 
 from autoviz_agent.models.state import SchemaProfile
 from autoviz_agent.registry.schemas import ToolCallRequest
-from autoviz_agent.registry.tools import TOOL_REGISTRY, ToolParameter, ToolSchema
+from autoviz_agent.registry.tools import (
+    TOOL_REGISTRY,
+    ToolParameter,
+    ToolSchema,
+    ensure_default_tools_registered,
+)
 from autoviz_agent.utils.logging import get_logger
 
 logger = get_logger(__name__)
@@ -200,6 +205,88 @@ def _repair_column_params(
                 repaired[param.name] = match
 
     return repaired
+
+
+def validate_plan_step_columns(
+    plan: Dict[str, Any],
+    schema_profile: SchemaProfile,
+) -> List[str]:
+    """
+    Validate plan step params that reference columns against schema.
+
+    Returns:
+        List of error strings
+    """
+    ensure_default_tools_registered()
+    errors: List[str] = []
+
+    for step in plan.get("steps", []):
+        tool_name = step.get("tool")
+        step_id = step.get("step_id")
+        params = step.get("params", {}) or {}
+
+        schema = TOOL_REGISTRY.get_schema(tool_name)
+        if not schema:
+            continue
+
+        for param in schema.parameters:
+            role = param.role
+            if not role:
+                continue
+            if param.name not in params:
+                continue
+            value = params.get(param.name)
+            if value in (None, "", "auto", ["auto"]):
+                continue
+            candidates = _columns_for_role(schema_profile, role)
+            if isinstance(value, list):
+                for item in value:
+                    if isinstance(item, str) and item not in candidates:
+                        errors.append(
+                            f"{step_id}.{param.name}: '{item}' not in {role} columns"
+                        )
+            elif isinstance(value, str):
+                if value not in candidates:
+                    errors.append(
+                        f"{step_id}.{param.name}: '{value}' not in {role} columns"
+                    )
+
+    return errors
+
+
+def repair_plan_step_columns(
+    plan: Dict[str, Any],
+    schema_profile: SchemaProfile,
+) -> List[str]:
+    """
+    Repair plan step params that reference invalid columns.
+
+    Returns:
+        List of repair descriptions
+    """
+    ensure_default_tools_registered()
+    repairs: List[str] = []
+
+    for step in plan.get("steps", []):
+        tool_name = step.get("tool")
+        step_id = step.get("step_id")
+        params = step.get("params", {}) or {}
+
+        schema = TOOL_REGISTRY.get_schema(tool_name)
+        if not schema:
+            continue
+
+        repaired = _repair_column_params(params, schema_profile, schema)
+        if repaired != params:
+            for key, old_val in params.items():
+                new_val = repaired.get(key)
+                if old_val != new_val:
+                    repairs.append(
+                        f"{step_id}.{key}: '{old_val}' -> '{new_val}'"
+                    )
+            step["params"] = repaired
+
+    return repairs
 
 
 class ValidationResult:

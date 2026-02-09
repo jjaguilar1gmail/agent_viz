@@ -6,10 +6,11 @@ This module defines JSON schemas that can be used for:
 3. Type hints and documentation
 """
 
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional, Tuple
 from pydantic import BaseModel, Field, field_validator
 
 from autoviz_agent.registry.intents import get_intent_labels
+from autoviz_agent.models.state import SchemaProfile
 
 
 # =============================================================================
@@ -150,6 +151,11 @@ class PlanChange(BaseModel):
         description="Parameters for the tool (required for 'add' actions)"
     )
 
+    satisfies: List[str] = Field(
+        ...,
+        description="Requirement labels this step satisfies (e.g., analysis.total, group_by)"
+    )
+
 
 class AdaptationOutput(BaseModel):
     """Plan adaptation output contract."""
@@ -202,7 +208,12 @@ def get_intent_schema() -> Dict[str, Any]:
     }
 
 
-def get_adaptation_schema() -> Dict[str, Any]:
+def get_adaptation_schema(
+    allowed_columns: Optional[List[str]] = None,
+    numeric_columns: Optional[List[str]] = None,
+    categorical_columns: Optional[List[str]] = None,
+    temporal_columns: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """
     Get JSON schema for plan adaptation.
     
@@ -211,6 +222,19 @@ def get_adaptation_schema() -> Dict[str, Any]:
     Returns:
         JSON schema dict
     """
+    def _string_enum(candidates: Optional[List[str]]) -> Dict[str, Any]:
+        if candidates:
+            return {"type": "string", "enum": candidates}
+        return {"type": "string"}
+
+    def _array_enum(candidates: Optional[List[str]]) -> Dict[str, Any]:
+        return {"type": "array", "items": _string_enum(candidates)}
+
+    column_enum = allowed_columns or []
+    numeric_enum = numeric_columns or column_enum
+    categorical_enum = categorical_columns or column_enum
+    temporal_enum = temporal_columns or column_enum
+
     return {
         "type": "object",
         "properties": {
@@ -238,10 +262,26 @@ def get_adaptation_schema() -> Dict[str, Any]:
                         },
                         "params": {
                             "type": ["object", "null"],
-                            "description": "Tool parameters"
+                            "description": "Tool parameters",
+                            "properties": {
+                                "metrics": _array_enum(numeric_enum),
+                                "group_by": _array_enum(categorical_enum),
+                                "x": _string_enum(column_enum),
+                                "y": _string_enum(column_enum),
+                                "column": _string_enum(column_enum),
+                                "columns": _array_enum(temporal_enum),
+                                "time_column": _string_enum(temporal_enum),
+                                "date_column": _string_enum(temporal_enum),
+                            },
+                            "additionalProperties": True,
+                        },
+                        "satisfies": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Requirement labels satisfied by this step"
                         }
                     },
-                    "required": ["action", "step_id"],
+                    "required": ["action", "step_id", "satisfies"],
                     "additionalProperties": False
                 }
             },
@@ -255,7 +295,12 @@ def get_adaptation_schema() -> Dict[str, Any]:
     }
 
 
-def get_requirement_extraction_schema() -> Dict[str, Any]:
+def get_requirement_extraction_schema(
+    allowed_columns: Optional[List[str]] = None,
+    numeric_columns: Optional[List[str]] = None,
+    categorical_columns: Optional[List[str]] = None,
+    temporal_columns: Optional[List[str]] = None,
+) -> Dict[str, Any]:
     """
     Get JSON schema for requirement extraction.
     
@@ -265,18 +310,27 @@ def get_requirement_extraction_schema() -> Dict[str, Any]:
     Returns:
         JSON schema dict
     """
+    def _items_schema(candidates: Optional[List[str]]) -> Dict[str, Any]:
+        if candidates:
+            return {"type": "string", "enum": candidates}
+        return {"type": "string"}
+
+    time_column_enum = None
+    if temporal_columns:
+        time_column_enum = [""] + temporal_columns
+
     return {
         "type": "object",
         "properties": {
             "metrics": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": _items_schema(numeric_columns or allowed_columns),
                 "description": "Numeric columns to analyze",
                 "default": []
             },
             "group_by": {
                 "type": "array",
-                "items": {"type": "string"},
+                "items": _items_schema(categorical_columns or allowed_columns),
                 "description": "Categorical columns for grouping",
                 "default": []
             },
@@ -285,6 +339,7 @@ def get_requirement_extraction_schema() -> Dict[str, Any]:
                 "properties": {
                     "column": {
                         "type": "string",
+                        **({"enum": time_column_enum} if time_column_enum else {}),
                         "description": "Time column name",
                         "default": ""
                     },
@@ -321,6 +376,49 @@ def get_requirement_extraction_schema() -> Dict[str, Any]:
         },
         "additionalProperties": False
     }
+
+
+def validate_requirement_columns(
+    requirements: RequirementExtractionOutput,
+    schema: SchemaProfile,
+) -> Tuple[bool, List[str]]:
+    """
+    Validate extracted requirement columns against schema columns.
+
+    Returns:
+        (is_valid, error_messages)
+    """
+    schema_columns = [col.name for col in schema.columns]
+    temporal_columns = [c.name for c in schema.columns if 'temporal' in c.roles]
+    numeric_columns = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'float', 'int']]
+    categorical_columns = [c.name for c in schema.columns if c.dtype in ['object', 'string', 'category']]
+
+    errors: List[str] = []
+
+    for metric in requirements.metrics:
+        if metric not in numeric_columns:
+            errors.append(f"metrics: '{metric}' is not a numeric column")
+
+    for group_col in requirements.group_by:
+        if group_col not in categorical_columns:
+            errors.append(f"group_by: '{group_col}' is not a categorical column")
+
+    if requirements.time and requirements.time.column:
+        if requirements.time.column not in temporal_columns:
+            errors.append(f"time.column: '{requirements.time.column}' is not a temporal column")
+
+    for output in requirements.outputs:
+        if output not in ("chart", "table"):
+            errors.append(f"outputs: '{output}' is not a valid output type")
+
+    unknown_columns = [
+        col for col in (requirements.metrics + requirements.group_by)
+        if col not in schema_columns
+    ]
+    for col in unknown_columns:
+        errors.append(f"unknown_column: '{col}' not in schema columns")
+
+    return len(errors) == 0, errors
 
 
 # =============================================================================

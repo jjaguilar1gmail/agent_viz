@@ -59,6 +59,7 @@ def handle_missing(
 
 @tool(
     description="Parse datetime columns",
+    capabilities=["parse_datetime", "temporal", "time_series"],
     param_overrides={"columns": {"role": "temporal"}},
 )
 def parse_datetime(
