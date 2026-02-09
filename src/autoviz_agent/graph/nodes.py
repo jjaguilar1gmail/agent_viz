@@ -608,25 +608,45 @@ def fill_params_node(state: GraphState) -> Dict[str, Any]:
         df = state.dataframe
         if df is None:
             return fixes
+        requirements = getattr(state, "requirements", None)
+        group_by = list(getattr(requirements, "group_by", []) or [])
         steps = plan.get("steps", [])
         for step in steps:
             if step.get("tool") != "compare_groups":
                 continue
             params = step.setdefault("params", {})
             params["df"] = "$aggregate_result"
-            group_col = params.get("group_col")
+            group_col = params.get("group_col") or (group_by[0] if group_by else None)
+            if group_col:
+                params["group_col"] = group_col
             if not group_col or group_col not in df.columns:
                 continue
             if "groups" in params:
                 valid_groups = set(df[group_col].dropna().unique().tolist())
                 filtered = [g for g in params.get("groups", []) if g in valid_groups]
-                if filtered:
+                if len(filtered) >= 2:
                     params["groups"] = filtered
                     fixes.append(f"filtered compare_groups groups for {group_col}")
                 else:
                     params.pop("groups", None)
                     fixes.append(f"removed compare_groups groups for {group_col}")
+            if "groups" not in params:
+                params["groups"] = sorted(df[group_col].dropna().unique().tolist())
+                fixes.append(f"set compare_groups groups for {group_col}")
         plan["steps"] = steps
+        return fixes
+
+    def apply_distribution_guardrails(plan: Dict[str, Any]) -> list[str]:
+        fixes: list[str] = []
+        requirements = getattr(state, "requirements", None)
+        analysis = set(getattr(requirements, "analysis", []) or [])
+        if "distribution" in analysis:
+            return fixes
+        steps = plan.get("steps", [])
+        filtered_steps = [step for step in steps if step.get("tool") != "plot_histogram"]
+        if len(filtered_steps) != len(steps):
+            fixes.append("removed plot_histogram (distribution not requested)")
+        plan["steps"] = filtered_steps
         return fixes
 
     plan = state.plan_skeleton or state.template_plan
@@ -687,6 +707,10 @@ def fill_params_node(state: GraphState) -> Dict[str, Any]:
     compare_fixes = apply_compare_groups_guardrails(filled_plan)
     if compare_fixes:
         logger.info("Applied compare_groups guardrails: %s", "; ".join(compare_fixes[:5]))
+
+    distribution_fixes = apply_distribution_guardrails(filled_plan)
+    if distribution_fixes:
+        logger.info("Applied distribution guardrails: %s", "; ".join(distribution_fixes[:5]))
 
     removed_steps = prune_unjustified_steps(filled_plan, state.requirements)
     if removed_steps:
