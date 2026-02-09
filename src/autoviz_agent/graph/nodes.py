@@ -336,8 +336,48 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
             
             if not is_valid:
                 logger.warning(f"Plan coverage validation failed: {coverage_report}")
-                # Log coverage issues but don't fail the pipeline
-                # In future, this could trigger replan or retrieval expansion
+                
+                # Implement retrieval fallback: expand tool list and retry once
+                if state.coverage_retry_count == 0:
+                    logger.info("Attempting tool expansion fallback...")
+                    state.coverage_retry_count += 1
+                    
+                    try:
+                        # Re-narrow with expanded parameters (no cap, higher top_k)
+                        retriever = get_tool_retriever()
+                        template_tools = state.template_plan.get("curated_tools", [])
+                        expanded_tools = retriever.retrieve_tools(
+                            state.requirements,
+                            template_tools,
+                            top_k=15,  # Increase from 5
+                            cap=None   # Remove cap to allow more tools
+                        )
+                        
+                        logger.info(f"Expanded from {len(state.narrowed_tools)} to {len(expanded_tools)} tools")
+                        print(f"\n[Fallback] Expanding tool list to improve coverage ({len(state.narrowed_tools)} → {len(expanded_tools)} tools)")
+                        
+                        # Re-adapt with expanded tools
+                        adapted_plan = state.llm_client.adapt_plan(
+                            state.template_plan,
+                            state.schema,
+                            state.intent,
+                            state.question,
+                            narrowed_tools=expanded_tools
+                        )
+                        state.adapted_plan = adapted_plan
+                        state.narrowed_tools = expanded_tools
+                        
+                        # Re-validate coverage
+                        is_valid_retry, coverage_report_retry = validate_plan_coverage(adapted_plan, state.requirements)
+                        if is_valid_retry:
+                            logger.info("Coverage improved after tool expansion")
+                            print("[Fallback] Coverage validation passed after expansion")
+                        else:
+                            logger.warning(f"Coverage still insufficient after expansion: {coverage_report_retry}")
+                    except Exception as e:
+                        logger.error(f"Tool expansion fallback failed: {e}")
+                else:
+                    logger.warning("Coverage retry limit reached, proceeding with current plan")
         
         # Track LLM interaction
         state.llm_interactions.append({
@@ -470,6 +510,7 @@ def execute_tools_node(state: GraphState) -> Dict[str, Any]:
         # Execute each tool call
         results = []
         context = {"dataframe": state.dataframe, "schema": state.schema}
+        semantic_repair_detected = False
         
         for tool_call in state.tool_calls:
             try:
@@ -480,16 +521,42 @@ def execute_tools_node(state: GraphState) -> Dict[str, Any]:
                     "result": result.outputs,
                     "duration_ms": result.duration_ms,
                 })
+                
+                # Phase 6: Check if repairs were semantic
+                if result.outputs and isinstance(result.outputs, dict):
+                    repair_details = result.outputs.get("details", {})
+                    if repair_details.get("changed_params"):
+                        # Classify repairs that occurred
+                        from autoviz_agent.registry.validation import classify_repair, RepairType
+                        for param_name, change_info in repair_details.get("changed_params", {}).items():
+                            old_val = change_info.get("old")
+                            new_val = change_info.get("new")
+                            repair_type = classify_repair(param_name, old_val, new_val, tool_call["tool"])
+                            
+                            if repair_type == RepairType.SEMANTIC:
+                                logger.warning(f"Semantic repair detected: {param_name} changed from {old_val} to {new_val}")
+                                print(f"\n[Semantic Repair] Parameter '{param_name}' was changed (may alter analysis intent)")
+                                state.last_repair_type = "semantic"
+                                semantic_repair_detected = True
+                            
             except Exception as e:
                 logger.error(f"Tool {tool_call['tool']} failed: {e}")
                 results.append({"tool": tool_call["tool"], "success": False, "error": str(e)})
         
         state.execution_results = results
         
+        # Phase 6: Recommend replan if semantic repairs detected
+        if semantic_repair_detected:
+            logger.warning("Semantic repairs detected - replan recommended to validate intent alignment")
+            print("[Recommendation] Semantic repairs detected. Consider re-running with adjusted parameters.")
+            # Note: Full replan trigger would require graph cycle back to adapt_plan_node
+            # Current implementation logs recommendation for user awareness
+        
         # Save execution log
         log_data = executor.execution_log.to_dict()
         log_data["run_id"] = state.run_id
         log_data["status"] = "completed" if all(r.get("success") for r in results) else "partial_failure"
+        log_data["semantic_repair_detected"] = semantic_repair_detected
         state.artifact_manager.save_json(log_data, "execution_log", "execution_log.json")
         
         logger.info(f"Executed {len(results)} tools")

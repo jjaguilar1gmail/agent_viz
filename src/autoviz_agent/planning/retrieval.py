@@ -322,7 +322,7 @@ class ToolRetriever:
         requirements: RequirementExtractionOutput,
         template_tools: List[str],
         top_k: int = 5,
-        cap: int = 12,
+        cap: Optional[int] = 12,
     ) -> List[str]:
         """
         Retrieve relevant tools using precedence rules.
@@ -336,7 +336,7 @@ class ToolRetriever:
             requirements: Extracted requirements
             template_tools: Template-curated tool list
             top_k: Number of tools to retrieve per query
-            cap: Maximum total tools to return
+            cap: Maximum total tools to return (None for no limit)
         
         Returns:
             List of tool names (deduplicated and capped)
@@ -360,13 +360,14 @@ class ToolRetriever:
         
         # Deduplicate and add retrieved tools
         for tool in retrieved_tools:
-            if tool not in selected_tools and len(selected_tools) < cap:
-                selected_tools.append(tool)
+            if tool not in selected_tools:
+                if cap is None or len(selected_tools) < cap:
+                    selected_tools.append(tool)
         
         # Add safety tools if missing and space allows
         for tool in self.SAFETY_TOOLS:
             if tool not in selected_tools:
-                if len(selected_tools) < cap + 2:  # Allow slight overflow for safety
+                if cap is None or len(selected_tools) < cap + 2:  # Allow slight overflow for safety
                     selected_tools.append(tool)
         
         logger.info(f"Selected {len(selected_tools)} tools: {selected_tools[:5]}...")

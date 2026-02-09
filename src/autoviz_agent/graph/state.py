@@ -67,6 +67,8 @@ class GraphState(BaseModel):
     # Status tracking
     current_node: str = Field(default="initialize", description="Current node")
     error_message: Optional[str] = Field(None, description="Error message if failed")
+    coverage_retry_count: int = Field(default=0, description="Number of coverage retry attempts")
+    last_repair_type: Optional[str] = Field(None, description="Type of last repair (safe/semantic)")
 
     class Config:
         arbitrary_types_allowed = True
