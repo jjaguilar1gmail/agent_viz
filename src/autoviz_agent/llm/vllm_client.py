@@ -276,8 +276,13 @@ class VLLMClient:
         requirements_schema = get_requirement_extraction_schema()
         
         logger.info("Extracting requirements from user question with vLLM")
-        response = self._generate(prompt, max_tokens=300, json_schema=requirements_schema)
-        self.last_response = response
+        try:
+            response = self._generate(prompt, max_tokens=300, json_schema=requirements_schema)
+            self.last_response = response
+        except Exception as e:
+            logger.error(f"Failed to generate requirement extraction response: {e}")
+            self.last_response = f"ERROR: {e}"
+            return RequirementExtractionOutput()
         
         # Parse and validate response
         try:
@@ -288,8 +293,14 @@ class VLLMClient:
                        f"group_by={validated.group_by}, analysis={validated.analysis}")
             return validated
             
+        except json.JSONDecodeError as e:
+            logger.warning(f"Failed to parse requirement extraction response as JSON: {e}")
+            logger.warning(f"Raw response: {response[:500]}")
+            # Return empty requirements on failure
+            return RequirementExtractionOutput()
         except Exception as e:
-            logger.warning(f"Failed to parse requirement extraction response: {e}. Using empty requirements.")
+            logger.warning(f"Failed to validate requirement extraction response: {e}")
+            logger.warning(f"Parsed data: {result if 'result' in locals() else 'N/A'}")
             # Return empty requirements on failure
             return RequirementExtractionOutput()
 
@@ -299,6 +310,7 @@ class VLLMClient:
         schema: SchemaProfile,
         intent: Intent,
         user_question: str,
+        narrowed_tools: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Adapt plan template based on schema and intent.
@@ -308,12 +320,15 @@ class VLLMClient:
             schema: Inferred schema
             intent: Classified intent
             user_question: User's question
+            narrowed_tools: Optional narrowed tool list from retrieval
 
         Returns:
             Adapted plan with modifications
         """
         # Build prompt for plan adaptation using PromptBuilder
-        prompt = self.prompt_builder.build_adaptation_prompt(template_plan, schema, intent, user_question)
+        prompt = self.prompt_builder.build_adaptation_prompt(
+            template_plan, schema, intent, user_question, narrowed_tools
+        )
         self.last_prompt = prompt
         
         # Get JSON schema for grammar constraint

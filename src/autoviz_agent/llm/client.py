@@ -230,6 +230,7 @@ class LLMClient:
         schema: SchemaProfile,
         intent: Intent,
         user_question: str,
+        narrowed_tools: Optional[List[str]] = None,
     ) -> Dict[str, Any]:
         """
         Adapt plan template based on schema and intent.
@@ -239,12 +240,15 @@ class LLMClient:
             schema: Inferred schema
             intent: Classified intent
             user_question: User's question
+            narrowed_tools: Optional narrowed tool list from retrieval
 
         Returns:
             Adapted plan with modifications
         """
         # Build prompt for plan adaptation using PromptBuilder
-        prompt = self.prompt_builder.build_adaptation_prompt(template_plan, schema, intent, user_question)
+        prompt = self.prompt_builder.build_adaptation_prompt(
+            template_plan, schema, intent, user_question, narrowed_tools
+        )
         self.last_prompt = prompt
         
         logger.info("Adapting plan template")

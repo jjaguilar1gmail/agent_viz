@@ -43,53 +43,53 @@ If no grain is mentioned, use "unknown" to defer to execution.
 ### Example 1
 Question: "Show me revenue totals by region"
 ```json
-{
+{{
   "metrics": ["revenue"],
   "group_by": ["region"],
-  "time": {"column": "", "grain": "unknown"},
+  "time": {{"column": "", "grain": "unknown"}},
   "analysis": ["total", "compare"],
   "outputs": ["chart", "table"],
   "constraints": []
-}
+}}
 ```
 
 ### Example 2
 Question: "Get revenue totals by region and product type over time"
 ```json
-{
+{{
   "metrics": ["revenue"],
   "group_by": ["region", "product_type"],
-  "time": {"column": "date", "grain": "unknown"},
+  "time": {{"column": "date", "grain": "unknown"}},
   "analysis": ["total", "compare", "trend"],
   "outputs": ["chart", "table"],
   "constraints": []
-}
+}}
 ```
 
 ### Example 3
 Question: "Plot daily sales trends for Q4 2023"
 ```json
-{
+{{
   "metrics": ["sales"],
   "group_by": [],
-  "time": {"column": "date", "grain": "daily"},
+  "time": {{"column": "date", "grain": "daily"}},
   "analysis": ["trend"],
   "outputs": ["chart"],
   "constraints": ["Q4 2023"]
-}
+}}
 ```
 
 ### Example 4
 Question: "Find anomalies in transaction amounts by merchant"
 ```json
-{
+{{
   "metrics": ["transaction_amount"],
   "group_by": ["merchant"],
-  "time": {"column": "", "grain": "unknown"},
+  "time": {{"column": "", "grain": "unknown"}},
   "analysis": ["anomaly", "distribution"],
   "outputs": ["chart", "table"],
   "constraints": []
-}
+}}
 ```
 
 ## Response Format

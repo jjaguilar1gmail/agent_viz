@@ -2,7 +2,7 @@
 
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from autoviz_agent.models.state import Intent, SchemaProfile
 from autoviz_agent.registry.intents import (
@@ -165,7 +165,8 @@ Response:"""
         template_plan: Dict[str, Any],
         schema: SchemaProfile,
         intent: Intent,
-        user_question: str
+        user_question: str,
+        narrowed_tools: Optional[List[str]] = None
     ) -> str:
         """
         Build prompt for plan adaptation.
@@ -175,6 +176,7 @@ Response:"""
             schema: Dataset schema profile
             intent: Classified intent
             user_question: User's question
+            narrowed_tools: Optional narrowed tool list from retrieval
 
         Returns:
             Formatted prompt string
@@ -182,10 +184,14 @@ Response:"""
         # Try loading from template file first
         template = self._load_template("adapt_plan")
         if template:
-            return self._format_adaptation_template(template, template_plan, schema, intent, user_question)
+            return self._format_adaptation_template(
+                template, template_plan, schema, intent, user_question, narrowed_tools
+            )
         
         # Fall back to embedded prompt
-        return self._build_embedded_adaptation_prompt(template_plan, schema, intent, user_question)
+        return self._build_embedded_adaptation_prompt(
+            template_plan, schema, intent, user_question, narrowed_tools
+        )
 
     def _format_adaptation_template(
         self,
@@ -193,7 +199,8 @@ Response:"""
         plan: Dict[str, Any],
         schema: SchemaProfile,
         intent: Intent,
-        question: str
+        question: str,
+        narrowed_tools: Optional[List[str]] = None
     ) -> str:
         """Format adaptation template with variables."""
         template_steps = plan.get('steps', [])
@@ -225,7 +232,7 @@ Response:"""
             numeric_cols=', '.join(numeric_cols) if numeric_cols else 'none',
             categorical_cols=', '.join(categorical_cols) if categorical_cols else 'none',
             data_shape=schema.data_shape,
-            tool_catalog=self._build_tool_catalog(),
+            tool_catalog=self._build_tool_catalog(narrowed_tools),
             schema_json=json.dumps(ADAPTATION_SCHEMA, indent=2)
         )
 
@@ -234,7 +241,8 @@ Response:"""
         template: Dict[str, Any],
         schema: SchemaProfile,
         intent: Intent,
-        question: str
+        question: str,
+        narrowed_tools: Optional[List[str]] = None
     ) -> str:
         """Build adaptation prompt using embedded template."""
         template_steps = template.get('steps', [])
@@ -273,7 +281,7 @@ AVAILABLE COLUMNS (use EXACT names):
 - Categorical columns: {', '.join(categorical_cols) if categorical_cols else 'none'}
 
 AVAILABLE TOOLS (use EXACT names):
-{self._build_tool_catalog()}
+{self._build_tool_catalog(narrowed_tools)}
 
 YOUR TASK:
 1. Check if the user question mentions specific requirements not in the template
@@ -302,11 +310,20 @@ IMPORTANT:
 
 Your JSON response:"""
 
-    def _build_tool_catalog(self) -> str:
+    def _build_tool_catalog(self, narrowed_tools: Optional[List[str]] = None) -> str:
+        """Build tool catalog, optionally filtering to narrowed tool list."""
         ensure_default_tools_registered()
         schemas = TOOL_REGISTRY.get_all_schemas()
         if not schemas:
             return "- (no tools registered)"
+        
+        # Filter to narrowed tools if provided
+        if narrowed_tools:
+            schemas = {name: schemas[name] for name in narrowed_tools if name in schemas}
+            if not schemas:
+                # Fallback to all tools if narrowing resulted in empty list
+                schemas = TOOL_REGISTRY.get_all_schemas()
+        
         lines = []
         for name in sorted(schemas.keys()):
             description = (schemas[name].description or "").strip()

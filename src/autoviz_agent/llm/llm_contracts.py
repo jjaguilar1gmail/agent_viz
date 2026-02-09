@@ -260,6 +260,7 @@ def get_requirement_extraction_schema() -> Dict[str, Any]:
     Get JSON schema for requirement extraction.
     
     Compatible with xgrammar2 grammar generation and JSON Schema Draft 7.
+    All fields are optional since not all analyses require all requirement types.
     
     Returns:
         JSON schema dict
@@ -270,27 +271,31 @@ def get_requirement_extraction_schema() -> Dict[str, Any]:
             "metrics": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Numeric columns to analyze"
+                "description": "Numeric columns to analyze",
+                "default": []
             },
             "group_by": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Categorical columns for grouping"
+                "description": "Categorical columns for grouping",
+                "default": []
             },
             "time": {
                 "type": "object",
                 "properties": {
                     "column": {
                         "type": "string",
-                        "description": "Time column name"
+                        "description": "Time column name",
+                        "default": ""
                     },
                     "grain": {
                         "type": "string",
-                        "description": "Time grain or unknown"
+                        "description": "Time grain or unknown",
+                        "default": "unknown"
                     }
                 },
-                "required": ["column", "grain"],
-                "additionalProperties": False
+                "additionalProperties": False,
+                "default": {"column": "", "grain": "unknown"}
             },
             "analysis": {
                 "type": "array",
@@ -298,20 +303,22 @@ def get_requirement_extraction_schema() -> Dict[str, Any]:
                     "type": "string",
                     "enum": ALLOWED_ANALYSIS_TYPES
                 },
-                "description": "Analysis types from allowed set"
+                "description": "Analysis types from allowed set",
+                "default": []
             },
             "outputs": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Output types: chart, table"
+                "description": "Output types: chart, table",
+                "default": ["chart", "table"]
             },
             "constraints": {
                 "type": "array",
                 "items": {"type": "string"},
-                "description": "Special conditions or filters"
+                "description": "Special conditions or filters",
+                "default": []
             }
         },
-        "required": ["metrics", "group_by", "time", "analysis", "outputs", "constraints"],
         "additionalProperties": False
     }
 

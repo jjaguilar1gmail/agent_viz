@@ -229,6 +229,7 @@ def extract_requirements_node(state: GraphState) -> Dict[str, Any]:
         }
     except Exception as e:
         logger.warning(f"Requirement extraction failed: {e}. Continuing with empty requirements.")
+        logger.debug(f"Exception type: {type(e).__name__}, traceback:", exc_info=True)
         # Don't fail the entire pipeline, just continue with empty requirements
         from autoviz_agent.llm.llm_contracts import RequirementExtractionOutput
         return {
@@ -318,11 +319,25 @@ def adapt_plan_node(state: GraphState) -> Dict[str, Any]:
     state.current_node = "adapt_plan"
     
     try:
-        # Adapt plan using LLM
+        # Adapt plan using LLM with narrowed tools
         adapted_plan = state.llm_client.adapt_plan(
-            state.template_plan, state.schema, state.intent, state.question
+            state.template_plan,
+            state.schema,
+            state.intent,
+            state.question,
+            narrowed_tools=getattr(state, 'narrowed_tools', None)
         )
         state.adapted_plan = adapted_plan
+        
+        # Validate coverage if requirements exist
+        if state.requirements and hasattr(state.requirements, 'metrics'):
+            from autoviz_agent.planning.diff import validate_plan_coverage
+            is_valid, coverage_report = validate_plan_coverage(adapted_plan, state.requirements)
+            
+            if not is_valid:
+                logger.warning(f"Plan coverage validation failed: {coverage_report}")
+                # Log coverage issues but don't fail the pipeline
+                # In future, this could trigger replan or retrieval expansion
         
         # Track LLM interaction
         state.llm_interactions.append({
