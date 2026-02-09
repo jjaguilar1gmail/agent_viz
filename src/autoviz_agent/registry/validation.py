@@ -254,6 +254,113 @@ def validate_plan_step_columns(
     return errors
 
 
+def normalize_plan_param_types(plan: Dict[str, Any]) -> List[str]:
+    """
+    Drop parameters that do not match expected tool parameter types.
+
+    Returns:
+        List of normalization messages.
+    """
+    ensure_default_tools_registered()
+    messages: List[str] = []
+
+    type_map = {
+        "integer": int,
+        "number": (int, float),
+        "string": str,
+        "array": list,
+        "object": dict,
+        "boolean": bool,
+    }
+
+    for step in plan.get("steps", []):
+        tool_name = step.get("tool")
+        step_id = step.get("step_id")
+        params = step.get("params", {}) or {}
+
+        schema = TOOL_REGISTRY.get_schema(tool_name)
+        if not schema:
+            continue
+
+        allowed = {p.name: p.type for p in schema.parameters}
+        cleaned = params.copy()
+        for key, value in params.items():
+            expected = allowed.get(key)
+            if not expected:
+                cleaned.pop(key, None)
+                messages.append(f"{step_id}.{key}: removed (unknown param)")
+                continue
+            expected_type = type_map.get(expected)
+            if expected_type and not isinstance(value, expected_type):
+                cleaned.pop(key, None)
+                messages.append(f"{step_id}.{key}: removed (type {type(value).__name__} != {expected})")
+
+        step["params"] = cleaned
+
+    return messages
+
+
+def validate_plan_step_params(
+    plan: Dict[str, Any],
+    schema_profile: SchemaProfile,
+) -> List[str]:
+    """
+    Validate plan step params against tool schemas.
+
+    Returns:
+        List of error strings.
+    """
+    ensure_default_tools_registered()
+    errors: List[str] = []
+
+    type_map = {
+        "integer": int,
+        "number": (int, float),
+        "string": str,
+        "array": list,
+        "object": dict,
+        "boolean": bool,
+    }
+
+    for step in plan.get("steps", []):
+        tool_name = step.get("tool")
+        step_id = step.get("step_id")
+        params = step.get("params", {}) or {}
+
+        schema = TOOL_REGISTRY.get_schema(tool_name)
+        if not schema:
+            continue
+
+        allowed = {p.name: p.type for p in schema.parameters}
+        for key, value in params.items():
+            expected = allowed.get(key)
+            if not expected:
+                errors.append(f"{step_id}.{key}: unknown parameter for {tool_name}")
+                continue
+            if key == "output_path":
+                errors.append(f"{step_id}.{key}: omit output_path in param fill")
+                continue
+            expected_type = type_map.get(expected)
+            if expected_type and not isinstance(value, expected_type):
+                errors.append(
+                    f"{step_id}.{key}: expected {expected}, got {type(value).__name__}"
+                )
+
+        if tool_name == "aggregate":
+            agg_map = params.get("agg_map")
+            if agg_map is not None and not isinstance(agg_map, dict):
+                errors.append(f"{step_id}.agg_map: expected object (dict), got {type(agg_map).__name__}")
+            if isinstance(agg_map, dict):
+                schema_columns = {col.name for col in schema_profile.columns}
+                for col_name in agg_map.keys():
+                    if col_name not in schema_columns:
+                        errors.append(
+                            f"{step_id}.agg_map: '{col_name}' not in schema columns"
+                        )
+
+    return errors
+
+
 def repair_plan_step_columns(
     plan: Dict[str, Any],
     schema_profile: SchemaProfile,

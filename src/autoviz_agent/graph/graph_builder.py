@@ -6,15 +6,19 @@ from langgraph.graph import END, StateGraph
 
 from autoviz_agent.graph.nodes import (
     adapt_plan_node,
+    build_plan_skeleton_node,
     classify_intent_node,
     compile_tool_calls_node,
     complete_node,
+    derive_capabilities_node,
     error_node,
     execute_tools_node,
     extract_requirements_node,
+    fill_params_node,
     infer_schema_node,
     initialize_node,
     repair_or_clarify_node,
+    select_tools_node,
     select_template_node,
     summarize_node,
 )
@@ -57,7 +61,10 @@ def build_graph() -> StateGraph:
     workflow.add_node("classify_intent", classify_intent_node)
     workflow.add_node("extract_requirements", extract_requirements_node)
     workflow.add_node("select_template", select_template_node)
-    workflow.add_node("adapt_plan", adapt_plan_node)
+    workflow.add_node("derive_capabilities", derive_capabilities_node)
+    workflow.add_node("select_tools", select_tools_node)
+    workflow.add_node("build_plan_skeleton", build_plan_skeleton_node)
+    workflow.add_node("fill_params", fill_params_node)
     workflow.add_node("compile_tool_calls", compile_tool_calls_node)
     workflow.add_node("execute_tools", execute_tools_node)
     workflow.add_node("summarize", summarize_node)
@@ -92,10 +99,25 @@ def build_graph() -> StateGraph:
     workflow.add_conditional_edges(
         "select_template",
         should_continue,
-        {"continue": "adapt_plan", "error": "error"}
+        {"continue": "derive_capabilities", "error": "error"}
     )
     workflow.add_conditional_edges(
-        "adapt_plan",
+        "derive_capabilities",
+        should_continue,
+        {"continue": "select_tools", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "select_tools",
+        should_continue,
+        {"continue": "build_plan_skeleton", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "build_plan_skeleton",
+        should_continue,
+        {"continue": "fill_params", "error": "error"}
+    )
+    workflow.add_conditional_edges(
+        "fill_params",
         should_continue,
         {"continue": "compile_tool_calls", "error": "error"}
     )

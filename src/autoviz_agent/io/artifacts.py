@@ -42,7 +42,7 @@ class ArtifactManager:
             subdir = self.run_dir / "charts"
         elif artifact_type in ["plan_template", "plan_adapted", "plan_diff"]:
             subdir = self.run_dir / "plans"
-        elif artifact_type in ["execution_log", "tool_calls", "llm_requests"]:
+        elif artifact_type in ["execution_log", "tool_calls", "llm_requests", "logs"]:
             subdir = self.run_dir / "logs"
         else:
             subdir = self.run_dir

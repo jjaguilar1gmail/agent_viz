@@ -14,9 +14,13 @@ from autoviz_agent.llm.llm_contracts import (
     get_intent_schema,
     get_adaptation_schema,
     get_requirement_extraction_schema,
+    get_param_fill_schema,
+    get_tool_selection_schema,
     validate_intent_output,
     validate_adaptation_output,
     validate_requirement_extraction_output,
+    validate_param_fill_output,
+    validate_tool_selection_output,
     validate_requirement_columns,
     RequirementExtractionOutput,
 )
@@ -563,3 +567,97 @@ class VLLMClient:
         
         logger.info(f"Generated {len(tool_calls)} valid tool calls from plan")
         return tool_calls
+
+    def fill_plan_params(
+        self,
+        plan: Dict[str, Any],
+        schema: SchemaProfile,
+        requirements: Optional[Any] = None,
+        validation_errors: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fill parameters for plan steps using LLM.
+        """
+        prompt = self.prompt_builder.build_param_fill_prompt(
+            plan,
+            schema,
+            requirements=requirements,
+            validation_errors=validation_errors,
+        )
+        self.last_prompt = prompt
+
+        allowed_columns = [c.name for c in schema.columns]
+        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'float', 'int']]
+        categorical_cols = [c.name for c in schema.columns if c.dtype in ['object', 'string', 'category']]
+        temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
+
+        param_schema = get_param_fill_schema(
+            allowed_columns=allowed_columns,
+            numeric_columns=numeric_cols,
+            categorical_columns=categorical_cols,
+            temporal_columns=temporal_cols,
+        )
+
+        logger.info("Filling plan parameters with vLLM")
+        response = self._generate(prompt, max_tokens=400, json_schema=param_schema)
+        self.last_response = response
+
+        try:
+            result = json.loads(response)
+            validated = validate_param_fill_output(result)
+            updates = {step.step_id: step.dict() for step in validated.steps}
+
+            for step in plan.get("steps", []):
+                update = updates.get(step.get("step_id"))
+                if not update:
+                    continue
+                step["params"] = update.get("params", step.get("params", {}))
+
+            from autoviz_agent.registry.validation import validate_plan_step_params
+            param_errors = validate_plan_step_params(plan, schema)
+            if param_errors and not validation_errors:
+                validation_errors = "Invalid params:\n- " + "\n- ".join(param_errors)
+                return self.fill_plan_params(
+                    plan,
+                    schema,
+                    requirements=requirements,
+                    validation_errors=validation_errors,
+                )
+
+            plan["param_fill_rationale"] = validated.rationale
+            return plan
+        except Exception as e:
+            logger.warning(f"Failed to parse param fill response: {e}. Using plan as-is.")
+            return plan
+
+    def select_tools(
+        self,
+        capability_targets: List[str],
+        candidate_tools: List[str],
+        tool_catalog: str,
+    ) -> Dict[str, Any]:
+        """
+        Select tools from candidate list using LLM.
+        """
+        prompt = self.prompt_builder.build_tool_selection_prompt(
+            capability_targets,
+            candidate_tools,
+            tool_catalog,
+        )
+        self.last_prompt = prompt
+
+        schema = get_tool_selection_schema(candidate_tools=candidate_tools)
+        logger.info("Selecting tools with vLLM")
+        response = self._generate(prompt, max_tokens=300, json_schema=schema)
+        self.last_response = response
+
+        try:
+            result = json.loads(response)
+            validated = validate_tool_selection_output(result)
+            return {
+                "selected_tools": validated.selected_tools,
+                "rationale": validated.rationale,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to parse tool selection response: {e}. Using candidates as-is.")
+            return {"selected_tools": candidate_tools, "rationale": "Fallback to candidates"}

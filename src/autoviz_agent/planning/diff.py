@@ -7,24 +7,12 @@ from autoviz_agent.planning.schema_tags import (
     get_required_capabilities,
     normalize_capability,
 )
+from autoviz_agent.planning.requirements import build_required_labels
 from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
 from autoviz_agent.llm.llm_contracts import RequirementExtractionOutput
 from autoviz_agent.utils.logging import get_logger
 
 logger = get_logger(__name__)
-
-def _build_required_labels(requirements: RequirementExtractionOutput) -> List[str]:
-    required_labels: List[str] = []
-    if requirements.analysis:
-        required_labels.extend([f"analysis.{label}" for label in requirements.analysis])
-    if requirements.outputs:
-        required_labels.extend([f"output.{label}" for label in requirements.outputs])
-    if requirements.group_by:
-        required_labels.append("group_by")
-    if requirements.time and requirements.time.column:
-        required_labels.append("time")
-    return required_labels
-
 
 def _compute_satisfies(
     required_labels: List[str],
@@ -165,7 +153,7 @@ def validate_plan_coverage(
         tool_capabilities[name] = set(schema.capabilities)
     
     # Build required labels from requirements
-    required_labels = _build_required_labels(requirements)
+    required_labels = build_required_labels(requirements)
 
     # Extract capabilities from plan steps
     plan_capabilities = set()
@@ -256,7 +244,7 @@ def prune_unjustified_steps(
         List of removed step_ids.
     """
     ensure_default_tools_registered()
-    required_labels = _build_required_labels(requirements)
+    required_labels = build_required_labels(requirements)
 
     tool_capabilities = {}
     schemas = TOOL_REGISTRY.get_all_schemas()

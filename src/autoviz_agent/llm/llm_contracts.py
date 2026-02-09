@@ -378,6 +378,122 @@ def get_requirement_extraction_schema(
     }
 
 
+# =============================================================================
+# Plan Param Fill Contracts
+# =============================================================================
+
+class ParamFillStep(BaseModel):
+    """Parameters for a single plan step."""
+
+    step_id: str = Field(..., description="Step identifier to update")
+    params: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Parameters to set for this tool"
+    )
+
+
+class ParamFillOutput(BaseModel):
+    """Plan parameter fill output contract."""
+
+    steps: List[ParamFillStep] = Field(
+        default_factory=list,
+        description="List of step parameter updates"
+    )
+    rationale: str = Field(
+        ...,
+        description="Overall explanation of why these parameters were chosen"
+    )
+
+
+class ToolSelectionOutput(BaseModel):
+    """Tool selection output contract."""
+
+    selected_tools: List[str] = Field(
+        default_factory=list,
+        description="Selected tool names"
+    )
+    rationale: str = Field(
+        ...,
+        description="Overall explanation of why these tools were selected"
+    )
+
+
+def get_param_fill_schema(
+    allowed_columns: Optional[List[str]] = None,
+    numeric_columns: Optional[List[str]] = None,
+    categorical_columns: Optional[List[str]] = None,
+    temporal_columns: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """
+    Get JSON schema for plan parameter filling.
+    """
+    def _string_enum(candidates: Optional[List[str]]) -> Dict[str, Any]:
+        if candidates:
+            return {"type": "string", "enum": candidates}
+        return {"type": "string"}
+
+    def _array_enum(candidates: Optional[List[str]]) -> Dict[str, Any]:
+        return {"type": "array", "items": _string_enum(candidates)}
+
+    column_enum = allowed_columns or []
+    numeric_enum = numeric_columns or column_enum
+    categorical_enum = categorical_columns or column_enum
+    temporal_enum = temporal_columns or column_enum
+
+    return {
+        "type": "object",
+        "properties": {
+            "steps": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "step_id": {"type": "string"},
+                        "params": {
+                            "type": "object",
+                            "properties": {
+                                "metrics": _array_enum(numeric_enum),
+                                "group_by": _array_enum(categorical_enum),
+                                "x": _string_enum(column_enum),
+                                "y": _string_enum(column_enum),
+                                "column": _string_enum(column_enum),
+                                "columns": _array_enum(temporal_enum),
+                                "time_column": _string_enum(temporal_enum),
+                                "date_column": _string_enum(temporal_enum),
+                            },
+                            "additionalProperties": True,
+                        },
+                    },
+                    "required": ["step_id", "params"],
+                    "additionalProperties": False,
+                },
+            },
+            "rationale": {"type": "string"},
+        },
+        "required": ["steps", "rationale"],
+        "additionalProperties": False,
+    }
+
+
+def get_tool_selection_schema(candidate_tools: Optional[List[str]] = None) -> Dict[str, Any]:
+    """
+    Get JSON schema for tool selection.
+    """
+    tool_enum = candidate_tools or []
+    return {
+        "type": "object",
+        "properties": {
+            "selected_tools": {
+                "type": "array",
+                "items": {"type": "string", "enum": tool_enum} if tool_enum else {"type": "string"},
+            },
+            "rationale": {"type": "string"},
+        },
+        "required": ["selected_tools", "rationale"],
+        "additionalProperties": False,
+    }
+
+
 def validate_requirement_columns(
     requirements: RequirementExtractionOutput,
     schema: SchemaProfile,
@@ -473,3 +589,17 @@ def validate_requirement_extraction_output(
         ValidationError if data doesn't match schema
     """
     return RequirementExtractionOutput(**data)
+
+
+def validate_param_fill_output(data: Dict[str, Any]) -> ParamFillOutput:
+    """
+    Validate and parse plan parameter fill output.
+    """
+    return ParamFillOutput(**data)
+
+
+def validate_tool_selection_output(data: Dict[str, Any]) -> ToolSelectionOutput:
+    """
+    Validate and parse tool selection output.
+    """
+    return ToolSelectionOutput(**data)

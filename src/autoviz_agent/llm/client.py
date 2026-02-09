@@ -11,6 +11,8 @@ from autoviz_agent.llm.llm_contracts import (
     RequirementExtractionOutput,
     validate_requirement_extraction_output,
     validate_requirement_columns,
+    validate_param_fill_output,
+    validate_tool_selection_output,
 )
 from autoviz_agent.registry.intents import classify_intent_by_keywords
 from autoviz_agent.registry.tools import TOOL_REGISTRY, ensure_default_tools_registered
@@ -454,3 +456,84 @@ class LLMClient:
         
         logger.info(f"Generated {len(tool_calls)} valid tool calls from plan")
         return tool_calls
+
+    def fill_plan_params(
+        self,
+        plan: Dict[str, Any],
+        schema: SchemaProfile,
+        requirements: Optional[Any] = None,
+        validation_errors: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fill parameters for plan steps using LLM.
+        """
+        prompt = self.prompt_builder.build_param_fill_prompt(
+            plan,
+            schema,
+            requirements=requirements,
+            validation_errors=validation_errors,
+        )
+        self.last_prompt = prompt
+
+        logger.info("Filling plan parameters")
+        response = self._generate(prompt, max_tokens=400, stop=["\n\n"])
+        self.last_response = response
+
+        try:
+            result = json.loads(response)
+            validated = validate_param_fill_output(result)
+            updates = {step.step_id: step.dict() for step in validated.steps}
+
+            for step in plan.get("steps", []):
+                update = updates.get(step.get("step_id"))
+                if not update:
+                    continue
+                step["params"] = update.get("params", step.get("params", {}))
+
+            from autoviz_agent.registry.validation import validate_plan_step_params
+            param_errors = validate_plan_step_params(plan, schema)
+            if param_errors and not validation_errors:
+                validation_errors = "Invalid params:\n- " + "\n- ".join(param_errors)
+                return self.fill_plan_params(
+                    plan,
+                    schema,
+                    requirements=requirements,
+                    validation_errors=validation_errors,
+                )
+
+            plan["param_fill_rationale"] = validated.rationale
+            return plan
+        except Exception as e:
+            logger.warning(f"Failed to parse param fill response: {e}. Using plan as-is.")
+            return plan
+
+    def select_tools(
+        self,
+        capability_targets: List[str],
+        candidate_tools: List[str],
+        tool_catalog: str,
+    ) -> Dict[str, Any]:
+        """
+        Select tools from candidate list using LLM.
+        """
+        prompt = self.prompt_builder.build_tool_selection_prompt(
+            capability_targets,
+            candidate_tools,
+            tool_catalog,
+        )
+        self.last_prompt = prompt
+
+        logger.info("Selecting tools")
+        response = self._generate(prompt, max_tokens=300, stop=["\n\n"])
+        self.last_response = response
+
+        try:
+            result = json.loads(response)
+            validated = validate_tool_selection_output(result)
+            return {
+                "selected_tools": validated.selected_tools,
+                "rationale": validated.rationale,
+            }
+        except Exception as e:
+            logger.warning(f"Failed to parse tool selection response: {e}. Using candidates as-is.")
+            return {"selected_tools": candidate_tools, "rationale": "Fallback to candidates"}

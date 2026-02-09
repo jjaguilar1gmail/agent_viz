@@ -24,6 +24,7 @@ configure_matplotlib_backend()
     param_overrides={
         "x": {"role": "temporal"},
         "y": {"role": "numeric"},
+        "group_by": {"role": "categorical"},
     },
 )
 def plot_line(
@@ -34,6 +35,7 @@ def plot_line(
     title: Optional[str] = None,
     xlabel: Optional[str] = None,
     ylabel: Optional[str] = None,
+    group_by: Optional[List[str]] = None,
 ) -> Path:
     """
     Create a line plot.
@@ -53,7 +55,22 @@ def plot_line(
     plt.rcParams.update(get_deterministic_style())
     fig, ax = plt.subplots()
 
-    ax.plot(df[x], df[y], marker="o")
+    if group_by:
+        group_cols = [col for col in group_by if col in df.columns]
+        if not group_cols:
+            group_by = None
+        else:
+            label_col = "__group_label__"
+            df = df.copy()
+            df[label_col] = df[group_cols].astype(str).agg(" | ".join, axis=1)
+            for label in sorted(df[label_col].unique()):
+                subset = df[df[label_col] == label]
+                ax.plot(subset[x], subset[y], marker="o", label=label)
+            ax.legend(title=", ".join(group_cols))
+
+    if not group_by:
+        ax.plot(df[x], df[y], marker="o")
+
     ax.set_title(title or f"{y} over {x}")
     ax.set_xlabel(xlabel or x)
     ax.set_ylabel(ylabel or y)

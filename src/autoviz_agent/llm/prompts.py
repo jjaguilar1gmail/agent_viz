@@ -16,6 +16,8 @@ from autoviz_agent.llm.llm_contracts import (
     get_intent_schema,
     get_adaptation_schema,
     get_requirement_extraction_schema,
+    get_param_fill_schema,
+    get_tool_selection_schema,
     ALLOWED_ANALYSIS_TYPES,
 )
 
@@ -402,8 +404,182 @@ Your JSON response:"""
             "intent": get_intent_schema(),
             "adaptation": get_adaptation_schema(),
             "requirements": get_requirement_extraction_schema(),
+            "param_fill": get_param_fill_schema(),
+            "tool_selection": get_tool_selection_schema(),
         }
         return schemas.get(prompt_type)
+
+    def build_tool_selection_prompt(
+        self,
+        capability_targets: List[str],
+        candidate_tools: List[str],
+        tool_catalog: str,
+    ) -> str:
+        """
+        Build prompt for selecting tools from candidates.
+        """
+        template = self._load_template("select_tools")
+        if template:
+            return template.format(
+                capability_targets=", ".join(capability_targets),
+                candidate_tools=", ".join(candidate_tools) if candidate_tools else "none",
+                tool_catalog=tool_catalog,
+            )
+
+        return f"""Select the minimal set of tools that covers all capability targets.
+
+CAPABILITY TARGETS:
+{", ".join(capability_targets)}
+
+CANDIDATE TOOLS (choose only from this list):
+{", ".join(candidate_tools) if candidate_tools else "none"}
+
+TOOL CATALOG:
+{tool_catalog}
+
+RULES:
+1. Only choose tools from the candidate list.
+2. Choose the smallest set that covers all targets.
+3. Prefer tools whose capabilities directly match the targets.
+
+RESPONSE FORMAT (JSON only):
+{{"selected_tools": ["tool_a", "tool_b"], "rationale": "<why>"}}
+"""
+
+    def build_param_fill_prompt(
+        self,
+        plan: Dict[str, Any],
+        schema: SchemaProfile,
+        requirements: Optional[Any] = None,
+        validation_errors: Optional[str] = None,
+    ) -> str:
+        """
+        Build prompt for filling tool parameters.
+        """
+        template = self._load_template("fill_params")
+        if template:
+            return self._format_param_fill_template(
+                template, plan, schema, requirements, validation_errors
+            )
+
+        return self._build_embedded_param_fill_prompt(
+            plan, schema, requirements, validation_errors
+        )
+
+    def _format_param_fill_template(
+        self,
+        template: str,
+        plan: Dict[str, Any],
+        schema: SchemaProfile,
+        requirements: Optional[Any],
+        validation_errors: Optional[str],
+    ) -> str:
+        step_summary = "\n".join(
+            [
+                f"  - {s.get('step_id')}: {s.get('tool')} ({s.get('description', '')})"
+                for s in plan.get("steps", [])
+            ]
+        )
+        temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
+        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'float', 'int']]
+        categorical_cols = [c.name for c in schema.columns if c.dtype in ['object', 'string', 'category']]
+        column_details = '\n'.join(
+            [f"  - {c.name} ({c.dtype}, cardinality: {c.cardinality})" for c in schema.columns]
+        )
+
+        param_constraints = self._format_param_constraints(plan)
+
+        return template.format(
+            step_summary=step_summary,
+            row_count=schema.row_count,
+            column_count=len(schema.columns),
+            column_details=column_details,
+            temporal_cols=', '.join(temporal_cols) if temporal_cols else 'none',
+            numeric_cols=', '.join(numeric_cols) if numeric_cols else 'none',
+            categorical_cols=', '.join(categorical_cols) if categorical_cols else 'none',
+            requirements_summary=self._format_requirements_summary(requirements),
+            validation_errors=validation_errors or "(none)",
+            param_constraints=param_constraints,
+        )
+
+    def _build_embedded_param_fill_prompt(
+        self,
+        plan: Dict[str, Any],
+        schema: SchemaProfile,
+        requirements: Optional[Any],
+        validation_errors: Optional[str],
+    ) -> str:
+        step_summary = "\n".join(
+            [
+                f"  - {s.get('step_id')}: {s.get('tool')} ({s.get('description', '')})"
+                for s in plan.get("steps", [])
+            ]
+        )
+        temporal_cols = [c.name for c in schema.columns if 'temporal' in c.roles]
+        numeric_cols = [c.name for c in schema.columns if c.dtype in ['int64', 'float64', 'float', 'int']]
+        categorical_cols = [c.name for c in schema.columns if c.dtype in ['object', 'string', 'category']]
+        column_details = '\n'.join(
+            [f"  - {c.name} ({c.dtype}, cardinality: {c.cardinality})" for c in schema.columns]
+        )
+
+        param_constraints = self._format_param_constraints(plan)
+
+        return f"""Fill tool parameters for each step. Use only valid column names.
+
+STEPS:
+{step_summary}
+
+DATASET:
+- Rows: {schema.row_count}, Columns: {len(schema.columns)}
+
+AVAILABLE COLUMNS (use EXACT names):
+{column_details}
+- Numeric columns: {', '.join(numeric_cols) if numeric_cols else 'none'}
+- Categorical columns: {', '.join(categorical_cols) if categorical_cols else 'none'}
+- Temporal columns: {', '.join(temporal_cols) if temporal_cols else 'none'}
+
+REQUIREMENTS:
+{self._format_requirements_summary(requirements)}
+
+VALIDATION ERRORS (if any):
+{validation_errors or "(none)"}
+
+FIX VALIDATION ERRORS (highest priority):
+If validation errors are present, you MUST correct them. Do not repeat the same invalid
+values. Use the errors as ground truth and adjust only the offending params.
+Common fixes:
+- agg_map must be a dict mapping real column names to agg functions (e.g., {"revenue": "sum"}).
+- Replace invalid column names with exact names from AVAILABLE COLUMNS.
+
+RULES:
+1. Only use column names from the list above.
+2. Only fill parameters required by each tool.
+3. Prefer requirements-aligned columns (metrics/group_by/time).
+4. Do not change tools; only fill params for the existing step_id.
+5. Do not set output_path; it is auto-filled during tool call generation.
+6. For agg_map, keys must be real column names from the schema.
+
+ALLOWED PARAMS BY STEP:
+{param_constraints}
+
+RESPONSE FORMAT (JSON only):
+{{"steps": [{{"step_id": "<id>", "params": {{"df": "$dataframe"}}}}], "rationale": "<why>"}}
+"""
+
+    def _format_param_constraints(self, plan: Dict[str, Any]) -> str:
+        ensure_default_tools_registered()
+        lines = []
+        for step in plan.get("steps", []):
+            tool_name = step.get("tool")
+            step_id = step.get("step_id")
+            schema = TOOL_REGISTRY.get_schema(tool_name)
+            if not schema:
+                continue
+            params = ", ".join(
+                p.name for p in schema.parameters if p.name != "output_path"
+            ) or "none"
+            lines.append(f"- {step_id} ({tool_name}): {params}")
+        return "\n".join(lines) if lines else "- (none)"
 
     def build_requirement_extraction_prompt(
         self,

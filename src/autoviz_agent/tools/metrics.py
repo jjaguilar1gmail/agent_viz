@@ -39,7 +39,7 @@ def aggregate(
 
 @tool(
     description="Compute summary statistics",
-    capabilities=["summary_stats", "aggregate"],
+    capabilities=["summary_stats"],
     param_overrides={"columns": {"role": "numeric"}},
 )
 def compute_summary_stats(df: pd.DataFrame, columns: Optional[List[str]] = None) -> Dict[str, Any]:

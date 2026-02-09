@@ -134,6 +134,7 @@ def compute_distributions(df: pd.DataFrame, column: str, bins: int = 10) -> Dict
 
 @tool(
     description="Compare metrics across groups",
+    capabilities=["compare", "group_by", "segment"],
     param_overrides={
         "group_col": {"role": "categorical"},
         "metric_col": {"role": "numeric"},

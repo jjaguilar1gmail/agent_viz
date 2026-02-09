@@ -50,7 +50,14 @@ class GraphState(BaseModel):
     schema: Optional[Any] = Field(None, description="Inferred schema")
     intent: Optional[Any] = Field(None, description="Classified intent")
     requirements: Optional[Any] = Field(None, description="Extracted requirements")
+    capability_targets: Optional[list[str]] = Field(
+        None, description="Derived requirement capability targets"
+    )
     narrowed_tools: Optional[list[str]] = Field(None, description="Narrowed tool list")
+    selected_tools: Optional[list[str]] = Field(None, description="Selected tool list")
+    plan_skeleton: Optional[Dict[str, Any]] = Field(
+        None, description="Plan skeleton before parameter fill"
+    )
     template_plan: Optional[Dict[str, Any]] = Field(None, description="Template plan")
     adapted_plan: Optional[Dict[str, Any]] = Field(None, description="Adapted plan")
     tool_calls: list[Dict[str, Any]] = Field(default_factory=list, description="Tool calls")
